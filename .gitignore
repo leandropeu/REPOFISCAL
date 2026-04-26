@@ -1,0 +1,9 @@
+backend/__pycache__/
+backend/app/__pycache__/
+backend/.deps/
+backend/uploads/
+backend/repofiscal.db
+LOGS/
+BKP/
+frontend/node_modules/
+frontend/dist/
