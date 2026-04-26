@@ -2105,7 +2105,7 @@ export default function App() {
                 onChange={(event) => setSearch((current) => ({ ...current, [activeDataKey]: event.target.value }))}
               />
               {currentCreateAction() ? (
-                <button type="button" className="primary-button" onClick={currentCreateAction()}>
+                <button type="button" className="primary-button topbar-create-button" onClick={currentCreateAction()}>
                   Novo registro
                 </button>
               ) : null}
@@ -2123,10 +2123,10 @@ export default function App() {
         {activeTab === "dashboard" ? (
           <>
             <section className="card-grid card-grid--six">
-              <StatCard title="Fornecedores" value={dashboard.counts.vendors} tone="neutral" detail="Servico e produto" />
+              <StatCard title="Fornecedores" value={dashboard.counts.vendors} tone="info" detail="Servico e produto" />
               <StatCard title="Profissionais" value={dashboard.counts.professionals} tone="info" detail="Equipe cadastrada" />
               <StatCard title="Usuarios ativos" value={dashboard.counts.active_users} tone="info" detail="Acessos liberados" />
-              <StatCard title="Arquivos" value={dashboard.counts.files} tone="neutral" detail="PDF, CSV, XML e Excel" />
+              <StatCard title="Arquivos" value={dashboard.counts.files} tone="info" detail="PDF, CSV, XML e Excel" />
               <StatCard title="Contratos ativos" value={dashboard.counts.active_contracts} tone="warning" detail="Com monitoramento" />
               <StatCard title="Notas pendentes" value={dashboard.counts.pending_invoices} tone="danger" detail="Pendente ou analise" />
             </section>
