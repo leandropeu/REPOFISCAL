@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile, status
 from fastapi.responses import FileResponse
 
-from app.core.audit import list_audit_logs, record_audit_event
+from app.core.audit import list_audit_logs, list_entity_audit_logs, record_audit_event
 from app.core.backup import get_backup_status, run_backup_if_due
 from app.core.config import ALLOWED_UPLOAD_EXTENSIONS, LOG_DIR, UPLOAD_DIR
 from app.core.db import execute, fetch_all, fetch_one
@@ -182,6 +182,32 @@ def _fetch_file(file_id: int) -> dict:
     return file_record or {}
 
 
+def _fetch_document_files(document_id: int) -> list[dict]:
+    return fetch_all(
+        """
+        SELECT
+            file_records.*,
+            vendors.name AS vendor_name,
+            units.name AS unit_name,
+            contracts.title AS contract_title,
+            invoices.invoice_number AS invoice_number,
+            regulatory_documents.document_type AS regulatory_document_type,
+            regulatory_documents.document_number AS regulatory_document_number,
+            users.name AS uploaded_by_name
+        FROM file_records
+        LEFT JOIN vendors ON vendors.id = file_records.vendor_id
+        LEFT JOIN units ON units.id = file_records.unit_id
+        LEFT JOIN contracts ON contracts.id = file_records.contract_id
+        LEFT JOIN invoices ON invoices.id = file_records.invoice_id
+        LEFT JOIN regulatory_documents ON regulatory_documents.id = file_records.regulatory_document_id
+        INNER JOIN users ON users.id = file_records.uploaded_by_user_id
+        WHERE file_records.regulatory_document_id = ?
+        ORDER BY datetime(file_records.created_at) DESC, file_records.id DESC
+        """,
+        (document_id,),
+    )
+
+
 def _coerce_optional_int(value: str | None) -> int | None:
     if value in (None, "", "null"):
         return None
@@ -209,6 +235,37 @@ def _audit_user(current_user: dict | None) -> tuple[int | None, str | None, int 
     if not current_user:
         return None, None, None
     return current_user.get("id"), current_user.get("name"), current_user.get("session_id")
+
+
+def _record_document_attachment_event(
+    *,
+    action: str,
+    description: str,
+    file_record: dict,
+    current_user: dict,
+) -> None:
+    document_id = file_record.get("regulatory_document_id")
+    if not document_id:
+        return
+
+    actor_id, actor_name, session_id = _audit_user(current_user)
+    record_audit_event(
+        action=action,
+        entity_type="regulatory_document",
+        entity_id=document_id,
+        description=description,
+        user_id=actor_id,
+        user_name=actor_name,
+        session_id=session_id,
+        metadata={
+            "document_type": file_record.get("regulatory_document_type"),
+            "document_number": file_record.get("regulatory_document_number"),
+            "file_id": file_record.get("id"),
+            "file_name": file_record.get("original_name"),
+            "file_extension": file_record.get("extension"),
+            "category": file_record.get("category"),
+        },
+    )
 
 
 @router.get("/dashboard")
@@ -1186,6 +1243,19 @@ def list_regulatory_documents(
     )
 
 
+@router.get("/regulatory-documents/{document_id}/history")
+def get_regulatory_document_history(document_id: int) -> dict[str, object]:
+    document = _fetch_document(document_id)
+    if not document:
+        raise _not_found("Documento regulatorio")
+
+    return {
+        "document": document,
+        "files": _fetch_document_files(document_id),
+        "history": list_entity_audit_logs("regulatory_document", document_id),
+    }
+
+
 @router.post("/regulatory-documents", status_code=status.HTTP_201_CREATED)
 def create_regulatory_document(payload: RegulatoryDocumentPayload, current_user: dict = Depends(get_current_user)) -> dict:
     now = utc_now_iso()
@@ -1402,11 +1472,17 @@ async def upload_file(
             "size_bytes": file_record.get("size_bytes"),
         },
     )
+    _record_document_attachment_event(
+        action="upload_attachment",
+        description=f"Anexo {file_record.get('original_name', upload.filename)} enviado para a solicitacao",
+        file_record=file_record,
+        current_user=current_user,
+    )
     return file_record
 
 
 @router.get("/files/{file_id}/download")
-def download_file(file_id: int) -> FileResponse:
+def download_file(file_id: int, current_user: dict = Depends(get_current_user)) -> FileResponse:
     file_record = _fetch_file(file_id)
     if not file_record:
         raise _not_found("Arquivo")
@@ -1414,6 +1490,24 @@ def download_file(file_id: int) -> FileResponse:
     file_path = UPLOAD_DIR / file_record["stored_name"]
     if not file_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Arquivo fisico nao encontrado.")
+
+    actor_id, actor_name, session_id = _audit_user(current_user)
+    record_audit_event(
+        action="download",
+        entity_type="file",
+        entity_id=file_id,
+        description=f"Arquivo {file_record.get('original_name', file_id)} baixado",
+        user_id=actor_id,
+        user_name=actor_name,
+        session_id=session_id,
+        metadata={"extension": file_record.get("extension"), "category": file_record.get("category")},
+    )
+    _record_document_attachment_event(
+        action="download_attachment",
+        description=f"Anexo {file_record.get('original_name', file_id)} baixado",
+        file_record=file_record,
+        current_user=current_user,
+    )
 
     media_type = file_record["content_type"] or "application/octet-stream"
     return FileResponse(path=file_path, media_type=media_type, filename=file_record["original_name"])
@@ -1436,6 +1530,12 @@ def delete_file(file_id: int, current_user: dict = Depends(get_current_user)) ->
         user_name=actor_name,
         session_id=session_id,
         metadata={"extension": file_record.get("extension"), "category": file_record.get("category")},
+    )
+    _record_document_attachment_event(
+        action="delete_attachment",
+        description=f"Anexo {file_record.get('original_name', file_id)} removido da solicitacao",
+        file_record=file_record,
+        current_user=current_user,
     )
     execute("DELETE FROM file_records WHERE id = ?", (file_id,))
     if file_path.exists():

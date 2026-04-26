@@ -41,19 +41,42 @@ def record_audit_event(
 
 
 def list_audit_logs(limit: int = 120) -> list[dict[str, Any]]:
-    rows = fetch_all(
-        """
-        SELECT
-            audit_logs.*,
-            COALESCE(users.email, '') AS user_email
-        FROM audit_logs
-        LEFT JOIN users ON users.id = audit_logs.user_id
-        ORDER BY datetime(audit_logs.created_at) DESC, audit_logs.id DESC
-        LIMIT ?
-        """,
-        (limit,),
+    return _decode_audit_rows(
+        fetch_all(
+            """
+            SELECT
+                audit_logs.*,
+                COALESCE(users.email, '') AS user_email
+            FROM audit_logs
+            LEFT JOIN users ON users.id = audit_logs.user_id
+            ORDER BY datetime(audit_logs.created_at) DESC, audit_logs.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
     )
 
+
+def list_entity_audit_logs(entity_type: str, entity_id: int, limit: int = 240) -> list[dict[str, Any]]:
+    return _decode_audit_rows(
+        fetch_all(
+            """
+            SELECT
+                audit_logs.*,
+                COALESCE(users.email, '') AS user_email
+            FROM audit_logs
+            LEFT JOIN users ON users.id = audit_logs.user_id
+            WHERE audit_logs.entity_type = ?
+              AND audit_logs.entity_id = ?
+            ORDER BY datetime(audit_logs.created_at) ASC, audit_logs.id ASC
+            LIMIT ?
+            """,
+            (entity_type, entity_id, limit),
+        )
+    )
+
+
+def _decode_audit_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in rows:
         try:
             row["metadata"] = json.loads(row["metadata_json"] or "{}")

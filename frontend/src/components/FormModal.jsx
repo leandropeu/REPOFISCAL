@@ -97,6 +97,118 @@ function ReportBlock({ report }) {
   );
 }
 
+function AttachmentHistory({ attachments }) {
+  if (!attachments?.enabled) {
+    return null;
+  }
+
+  if (!attachments.documentId) {
+    return (
+      <section className="attachment-panel">
+        <div className="attachment-panel__header">
+          <div>
+            <span className="eyebrow">Anexos</span>
+            <h4>Solicitacao documental</h4>
+          </div>
+        </div>
+        <div className="empty-state">Salve o documento primeiro para liberar anexos e historico completo.</div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="attachment-panel">
+      <div className="attachment-panel__header">
+        <div>
+          <span className="eyebrow">Anexos</span>
+          <h4>Solicitacao documental</h4>
+        </div>
+        <span className="panel__meta">
+          {attachments.files.length} arquivo(s) e {attachments.history.length} evento(s)
+        </span>
+      </div>
+
+      {attachments.loading ? <div className="empty-state">Carregando anexos e historico...</div> : null}
+
+      <div className="attachment-upload-grid">
+        <label className="field field--full" htmlFor="document-attachment-input">
+          <span>Arquivo</span>
+          <input
+            id="document-attachment-input"
+            type="file"
+            accept=".pdf,.csv,.xml,.xlsx,.xls"
+            onChange={(event) => attachments.onChange("file", event.target.files?.[0] || null)}
+          />
+        </label>
+        <label className="field" htmlFor="document-attachment-category">
+          <span>Categoria</span>
+          <input
+            id="document-attachment-category"
+            value={attachments.form.category}
+            onChange={(event) => attachments.onChange("category", event.target.value)}
+          />
+        </label>
+        <label className="field" htmlFor="document-attachment-notes">
+          <span>Observacoes</span>
+          <input
+            id="document-attachment-notes"
+            value={attachments.form.notes}
+            onChange={(event) => attachments.onChange("notes", event.target.value)}
+          />
+        </label>
+        <div className="attachment-panel__actions">
+          <button type="button" className="primary-button" onClick={attachments.onUpload} disabled={attachments.uploading}>
+            {attachments.uploading ? "Enviando..." : "Anexar arquivo"}
+          </button>
+        </div>
+      </div>
+
+      <div className="attachment-columns">
+        <div className="attachment-card">
+          <span className="attachment-card__title">Arquivos vinculados</span>
+          <div className="attachment-list">
+            {attachments.files.length ? (
+              attachments.files.map((file) => (
+                <div key={file.id} className="attachment-list__item">
+                  <div>
+                    <strong>{file.original_name}</strong>
+                    <span>
+                      {(file.category || "Sem categoria")} - {file.uploaded_by_name || "Sistema"} - {attachments.formatDateTime(file.created_at)}
+                    </span>
+                  </div>
+                  <button type="button" className="secondary-button" onClick={() => attachments.onDownload(file)}>
+                    Baixar
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">Nenhum anexo vinculado a esta solicitacao.</div>
+            )}
+          </div>
+        </div>
+
+        <div className="attachment-card">
+          <span className="attachment-card__title">Historico de solicitacao</span>
+          <div className="attachment-timeline">
+            {attachments.history.length ? (
+              attachments.history.map((entry) => (
+                <div key={`${entry.id}-${entry.created_at}`} className="attachment-timeline__item">
+                  <strong>{entry.description}</strong>
+                  <span>
+                    {entry.user_name || entry.user_email || "Sistema"} - {attachments.formatDateTime(entry.created_at)}
+                  </span>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">Nenhum evento registrado ainda.</div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export default function FormModal({
   open,
   title,
@@ -106,7 +218,8 @@ export default function FormModal({
   onClose,
   onSubmit,
   submitLabel,
-  report
+  report,
+  attachments
 }) {
   if (!open) {
     return null;
@@ -149,6 +262,7 @@ export default function FormModal({
             </div>
             <ReportBlock report={report} />
           </div>
+          <AttachmentHistory attachments={attachments} />
           <div className="modal-actions">
             <button type="button" className="secondary-button" onClick={onClose}>
               Cancelar

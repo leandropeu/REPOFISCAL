@@ -81,6 +81,18 @@ const defaultOperations = {
   }
 };
 
+const defaultDocumentAttachments = {
+  loading: false,
+  uploading: false,
+  files: [],
+  history: [],
+  form: {
+    file: null,
+    category: "",
+    notes: ""
+  }
+};
+
 const initialForms = {
   users: {
     name: "",
@@ -313,22 +325,42 @@ function statusBadge(value) {
   );
 }
 
-function dueBadge(value) {
-  const meta = getDueMeta(value);
+function getInvoiceDueMeta(invoice) {
+  if (!invoice) {
+    return { tone: "neutral", label: "Sem vencimento", priority: 3, sortValue: Number.POSITIVE_INFINITY };
+  }
+
+  if (invoice.status === "paid") {
+    return { tone: "success", label: "Pago", priority: 3, sortValue: Number.POSITIVE_INFINITY };
+  }
+
+  if (invoice.status === "canceled") {
+    return { tone: "neutral", label: "Cancelado", priority: 3, sortValue: Number.POSITIVE_INFINITY };
+  }
+
+  return getDueMeta(invoice.due_date);
+}
+
+function dueBadge(value, metaOverride = null) {
+  const meta = metaOverride || getDueMeta(value);
   return <span className={`status-badge status-badge--${meta.tone}`}>{meta.label}</span>;
 }
 
-function dueCell(value) {
+function dueCell(value, metaOverride = null) {
   return (
     <div className="due-cell">
       <strong>{formatDate(value)}</strong>
-      {dueBadge(value)}
+      {dueBadge(value, metaOverride)}
     </div>
   );
 }
 
-function dueRowClass(value) {
-  const tone = getDueMeta(value).tone;
+function dueRowClass(value, metaOverride = null) {
+  const meta = metaOverride || getDueMeta(value);
+  if (meta.priority >= 3) {
+    return "";
+  }
+  const tone = meta.tone;
   if (tone === "danger") {
     return "table-row--danger";
   }
@@ -373,49 +405,48 @@ function LoginScreen({ onLogin, loading, error, theme, onThemeChange }) {
 
   return (
     <div className="auth-layout">
-      <section className="auth-panel auth-panel--hero">
-        <span className="eyebrow">Departamento Fiscal</span>
-        <h1>RepoFiscal</h1>
-        <p>
-          Plataforma para fornecedores, profissionais, contratos, documentos,
-          arquivos e fluxo fiscal com historico e processos em transito.
-        </p>
-        <div className="hero-tags">
-          <span>SQLite local</span>
-          <span>FastAPI</span>
-          <span>React</span>
-          <span>Arquivos integrados</span>
-        </div>
-      </section>
-
-      <section className="auth-panel auth-panel--form">
-        <div>
-          <div className="auth-panel__topbar">
-            <span className="eyebrow">Acesso</span>
-            <ThemeSelector theme={theme} onChange={onThemeChange} compact />
+      <div className="auth-login-shell">
+        <div className="auth-brand auth-brand--login">
+          <div className="auth-avatar" aria-hidden="true">
+            <svg viewBox="0 0 48 48" fill="none" role="presentation">
+              <circle cx="24" cy="17" r="7.5" stroke="currentColor" strokeWidth="2.2" />
+              <path d="M11 37c2.7-6.1 8-9.2 13-9.2S34.3 30.9 37 37" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
+            </svg>
           </div>
-          <h2>Entrar no sistema</h2>
-          <p>Credenciais iniciais carregadas com o perfil super administrador.</p>
+          <img className="auth-brand__logo auth-brand__logo--login" src={repofiscalLogo} alt="REPOFISCAL" />
         </div>
 
-        <form className="auth-form" onSubmit={handleSubmit}>
-          <label className="field" htmlFor="email">
-            <span>E-mail</span>
-            <input id="email" type="email" value={email} onChange={(event) => setEmail(event.target.value)} />
-          </label>
+        <section className="auth-panel auth-panel--form auth-panel--login">
+          <h2 className="auth-login-title">Login</h2>
 
-          <label className="field" htmlFor="password">
-            <span>Senha</span>
-            <input id="password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
-          </label>
+          <form className="auth-form auth-form--login" onSubmit={handleSubmit}>
+            <label className="field field--login" htmlFor="email">
+              <span>E-mail</span>
+              <input id="email" type="email" placeholder="Email" value={email} onChange={(event) => setEmail(event.target.value)} />
+            </label>
 
-          {error ? <div className="banner banner--error">{error}</div> : null}
+            <label className="field field--login" htmlFor="password">
+              <span>Senha</span>
+              <input id="password" type="password" placeholder="Password" value={password} onChange={(event) => setPassword(event.target.value)} />
+            </label>
 
-          <button type="submit" className="primary-button primary-button--wide" disabled={loading || submitting}>
-            {loading || submitting ? "Entrando..." : "Acessar painel"}
-          </button>
-        </form>
-      </section>
+            <label className="auth-remember" htmlFor="remember-login">
+              <input id="remember-login" type="checkbox" defaultChecked />
+              <span>Lembrar</span>
+            </label>
+
+            {error ? <div className="banner banner--error">{error}</div> : null}
+
+            <button type="submit" className="primary-button primary-button--wide auth-login-button" disabled={loading || submitting}>
+              {loading || submitting ? "ENTRANDO" : "LOGIN"}
+            </button>
+
+            <div className="auth-login-theme">
+              <ThemeSelector theme={theme} onChange={onThemeChange} compact />
+            </div>
+          </form>
+        </section>
+      </div>
     </div>
   );
 }
@@ -523,6 +554,130 @@ function limitTimeline(items, emptyLabel) {
   return items.slice(0, 6);
 }
 
+function buildFilterFieldsFromForm(fields, options = {}) {
+  const { excludeNames = [], includeDueState = false } = options;
+  const mappedFields = fields
+    .filter((field) => !excludeNames.includes(field.name))
+    .map((field) => {
+      if (field.type === "checkbox") {
+        return {
+          name: field.name,
+          label: field.label,
+          filterType: "select",
+          options: [
+            { value: "true", label: "Sim" },
+            { value: "false", label: "Nao" }
+          ]
+        };
+      }
+
+      if (field.type === "date") {
+        return {
+          name: field.name,
+          label: field.label,
+          filterType: "date-range"
+        };
+      }
+
+      if (field.type === "select") {
+        return {
+          name: field.name,
+          label: field.label,
+          filterType: "select",
+          options: field.options || []
+        };
+      }
+
+      if (field.type === "number") {
+        return {
+          name: field.name,
+          label: field.label,
+          filterType: "number"
+        };
+      }
+
+      return {
+        name: field.name,
+        label: field.label,
+        filterType: "text"
+      };
+    });
+
+  if (includeDueState) {
+    mappedFields.push({
+      name: "due_state",
+      label: "Situacao do vencimento",
+      filterType: "select",
+      options: [
+        { value: "success", label: "Em dia" },
+        { value: "warning", label: "A vencer" },
+        { value: "danger", label: "Vencido" }
+      ]
+    });
+  }
+
+  return mappedFields;
+}
+
+function getInitialListFilters() {
+  return {
+    users: {},
+    files: {},
+    vendors: {},
+    professionals: {},
+    units: {},
+    contracts: {},
+    invoices: {},
+    avcb: {},
+    clcb: {}
+  };
+}
+
+function matchesDateRange(value, fromValue, toValue) {
+  if (!fromValue && !toValue) {
+    return true;
+  }
+
+  const parsedValue = parseDateValue(value);
+  if (!parsedValue) {
+    return false;
+  }
+
+  const fromDate = parseDateValue(fromValue);
+  const toDate = parseDateValue(toValue);
+
+  if (fromDate && parsedValue < fromDate) {
+    return false;
+  }
+
+  if (toDate && parsedValue > toDate) {
+    return false;
+  }
+
+  return true;
+}
+
+function matchesFilterValue(rowValue, filterValue, filterType) {
+  if (filterValue === "" || filterValue === null || typeof filterValue === "undefined") {
+    return true;
+  }
+
+  if (filterType === "number") {
+    return String(rowValue ?? "") === String(filterValue);
+  }
+
+  if (filterType === "select") {
+    if (typeof rowValue === "boolean") {
+      return String(rowValue) === String(filterValue);
+    }
+    return String(rowValue ?? "") === String(filterValue);
+  }
+
+  return String(rowValue ?? "")
+    .toLowerCase()
+    .includes(String(filterValue).trim().toLowerCase());
+}
+
 export default function App() {
   const { user, loading: authLoading, login, logout } = useAuth();
   const [theme, setTheme] = useState(() => {
@@ -563,8 +718,21 @@ export default function App() {
     avcb: "",
     clcb: ""
   });
+  const [listFilters, setListFilters] = useState(getInitialListFilters);
+  const [listFilterPanels, setListFilterPanels] = useState({
+    users: false,
+    files: false,
+    vendors: false,
+    professionals: false,
+    units: false,
+    contracts: false,
+    invoices: false,
+    avcb: false,
+    clcb: false
+  });
   const [modal, setModal] = useState({ section: null, item: null, documentType: null });
   const [formData, setFormData] = useState({});
+  const [documentAttachments, setDocumentAttachments] = useState(defaultDocumentAttachments);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     file: null,
@@ -655,6 +823,21 @@ export default function App() {
     document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
     window.localStorage.setItem("repofiscal-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (modal.section === "documents" && modal.item?.id) {
+      loadDocumentAttachments(modal.item.id);
+      return;
+    }
+
+    setDocumentAttachments(defaultDocumentAttachments);
+  }, [modal.section, modal.item?.id]);
+
+  async function handleUserSwitch() {
+    setBanner("");
+    setError("");
+    await logout();
+  }
 
   const sectionTitle = useMemo(() => {
     if (activeTab === "vendors") {
@@ -852,6 +1035,38 @@ export default function App() {
     [selectOptions, modal.item]
   );
 
+  const listFilterDefinitions = useMemo(
+    () => ({
+      users: buildFilterFieldsFromForm(fieldsBySection.users, { excludeNames: ["password"] }),
+      vendors: buildFilterFieldsFromForm(fieldsBySection.vendors),
+      professionals: buildFilterFieldsFromForm(fieldsBySection.professionals),
+      units: buildFilterFieldsFromForm(fieldsBySection.units),
+      contracts: buildFilterFieldsFromForm(fieldsBySection.contracts, { includeDueState: true }),
+      invoices: buildFilterFieldsFromForm(fieldsBySection.invoices, { includeDueState: true }),
+      avcb: buildFilterFieldsFromForm(fieldsBySection.documents, { excludeNames: ["document_type"], includeDueState: true }),
+      clcb: buildFilterFieldsFromForm(fieldsBySection.documents, { excludeNames: ["document_type"], includeDueState: true }),
+      files: [
+        { name: "category", label: "Categoria", filterType: "text" },
+        {
+          name: "extension",
+          label: "Tipo de arquivo",
+          filterType: "select",
+          options: Array.from(new Set(entities.files.map((file) => file.extension).filter(Boolean)))
+            .sort()
+            .map((extension) => ({ value: extension, label: extension }))
+        },
+        { name: "vendor_id", label: "Fornecedor", filterType: "select", options: selectOptions.vendorOptions },
+        { name: "unit_id", label: "Unidade", filterType: "select", options: selectOptions.unitOptions },
+        { name: "contract_id", label: "Contrato", filterType: "select", options: selectOptions.contractOptions },
+        { name: "invoice_id", label: "Nota fiscal", filterType: "select", options: selectOptions.invoiceOptions },
+        { name: "regulatory_document_id", label: "Documento regulatorio", filterType: "select", options: selectOptions.regulatoryOptions },
+        { name: "created_at", label: "Data de envio", filterType: "date-range" },
+        { name: "notes", label: "Observacoes", filterType: "text" }
+      ]
+    }),
+    [entities.files, fieldsBySection, selectOptions]
+  );
+
   const modalReport = useMemo(() => {
     const section = modal.section;
     const item = modal.item;
@@ -999,8 +1214,8 @@ export default function App() {
         fornecedor: invoice.vendor_name,
         vencimento: invoice.due_date,
         situacao: explicitStatusLabels[invoice.status] || invoice.status,
-        alerta: getDueMeta(invoice.due_date).label,
-        prioridade: getDueMeta(invoice.due_date).priority
+        alerta: getInvoiceDueMeta(invoice).label,
+        prioridade: getInvoiceDueMeta(invoice).priority
       })),
       ...entities.documents.map((document) => ({
         modulo: document.document_type,
@@ -1288,7 +1503,7 @@ export default function App() {
           unit_name: item.unit_name,
           issue_date_label: formatDate(item.issue_date),
           due_date_label: formatDate(item.due_date),
-          alerta: getDueMeta(item.due_date).label,
+          alerta: getInvoiceDueMeta(item).label,
           status: explicitStatusLabels[item.status] || item.status,
           total_amount_label: formatCurrency(item.total_amount),
           tax_amount_label: formatCurrency(item.tax_amount)
@@ -1490,6 +1705,13 @@ export default function App() {
     return items;
   }, [reportDefinitions, reportFilters, selectOptions]);
 
+  const currentFilterFields = listFilterDefinitions[activeDataKey] || [];
+  const currentListFilters = listFilters[activeDataKey] || {};
+  const activeListFilterCount = useMemo(
+    () => Object.values(currentListFilters).filter((value) => value !== "" && value !== null && typeof value !== "undefined").length,
+    [currentListFilters]
+  );
+
   const visibleReports = useMemo(() => {
     const selectedReportId = reportFilters.report_id;
     const selectedVendorLabel = selectOptions.vendorOptions.find((option) => option.value === reportFilters.vendor_id)?.label || "";
@@ -1565,7 +1787,7 @@ export default function App() {
     }
 
     const term = deferredSearch.trim().toLowerCase();
-    const filtered = term
+    const filteredBySearch = term
       ? list.filter((item) => Object.values(item).some((value) => String(value ?? "").toLowerCase().includes(term)))
       : list;
 
@@ -1578,19 +1800,65 @@ export default function App() {
             ? "expiry_date"
             : null;
 
+    const filtered = filteredBySearch.filter((item) =>
+      currentFilterFields.every((field) => {
+        if (field.filterType === "date-range") {
+          return matchesDateRange(
+            item[field.name],
+            currentListFilters[`${field.name}_from`],
+            currentListFilters[`${field.name}_to`]
+          );
+        }
+
+        if (field.name === "due_state") {
+          if (!currentListFilters.due_state) {
+            return true;
+          }
+          const dueMeta = activeDataKey === "invoices" ? getInvoiceDueMeta(item) : getDueMeta(item[dueField]);
+          return dueMeta.tone === currentListFilters.due_state;
+        }
+
+        return matchesFilterValue(item[field.name], currentListFilters[field.name], field.filterType);
+      })
+    );
+
     if (!dueField) {
       return filtered;
     }
 
     return [...filtered].sort((left, right) => {
-      const leftMeta = getDueMeta(left[dueField]);
-      const rightMeta = getDueMeta(right[dueField]);
+      const leftMeta = activeTab === "invoices" ? getInvoiceDueMeta(left) : getDueMeta(left[dueField]);
+      const rightMeta = activeTab === "invoices" ? getInvoiceDueMeta(right) : getDueMeta(right[dueField]);
       if (leftMeta.priority !== rightMeta.priority) {
         return leftMeta.priority - rightMeta.priority;
       }
       return leftMeta.sortValue - rightMeta.sortValue;
     });
-  }, [activeTab, activeDataKey, deferredSearch, entities, vendorView]);
+  }, [activeTab, activeDataKey, currentFilterFields, currentListFilters, deferredSearch, entities, vendorView]);
+
+  function updateListFilter(section, name, value) {
+    setListFilters((current) => ({
+      ...current,
+      [section]: {
+        ...current[section],
+        [name]: value
+      }
+    }));
+  }
+
+  function clearListFilters(section) {
+    setListFilters((current) => ({
+      ...current,
+      [section]: {}
+    }));
+  }
+
+  function toggleListFilterPanel(section) {
+    setListFilterPanels((current) => ({
+      ...current,
+      [section]: !current[section]
+    }));
+  }
 
   async function handleLogin(email, password) {
     setLoginError("");
@@ -1616,6 +1884,7 @@ export default function App() {
   function closeModal() {
     setModal({ section: null, item: null, documentType: null });
     setFormData({});
+    setDocumentAttachments(defaultDocumentAttachments);
   }
 
   function updateFormField(name, value) {
@@ -1624,6 +1893,34 @@ export default function App() {
 
   function updateUploadField(name, value) {
     setUploadForm((current) => ({ ...current, [name]: value }));
+  }
+
+  function updateDocumentAttachmentField(name, value) {
+    setDocumentAttachments((current) => ({
+      ...current,
+      form: { ...current.form, [name]: value }
+    }));
+  }
+
+  async function loadDocumentAttachments(documentId) {
+    setDocumentAttachments((current) => ({ ...current, loading: true }));
+    try {
+      const payload = await api.get(`/api/regulatory-documents/${documentId}/history`);
+      setDocumentAttachments((current) => ({
+        ...current,
+        loading: false,
+        files: payload.files || [],
+        history: payload.history || []
+      }));
+    } catch (historyError) {
+      setDocumentAttachments((current) => ({
+        ...current,
+        loading: false,
+        files: [],
+        history: []
+      }));
+      setError(historyError.message);
+    }
   }
 
   function normalizePayload(section, data, documentType) {
@@ -1777,10 +2074,60 @@ export default function App() {
     }
   }
 
+  async function handleDocumentAttachmentUpload() {
+    if (!modal.item?.id) {
+      setError("Salve o documento antes de anexar arquivos.");
+      return;
+    }
+
+    if (!documentAttachments.form.file) {
+      setError("Selecione um arquivo para anexar a solicitacao.");
+      return;
+    }
+
+    setDocumentAttachments((current) => ({ ...current, uploading: true }));
+    setBanner("");
+    setError("");
+
+    try {
+      const form = new FormData();
+      form.append("upload", documentAttachments.form.file);
+      form.append("category", documentAttachments.form.category);
+      form.append("notes", documentAttachments.form.notes);
+      form.append("vendor_id", String(formData.vendor_id || modal.item.vendor_id || ""));
+      form.append("unit_id", String(formData.unit_id || modal.item.unit_id || ""));
+      form.append("contract_id", String(formData.contract_id || modal.item.contract_id || ""));
+      form.append("regulatory_document_id", String(modal.item.id));
+
+      await api.postForm("/api/files/upload", form);
+      setDocumentAttachments((current) => ({
+        ...current,
+        uploading: false,
+        form: {
+          file: null,
+          category: "",
+          notes: ""
+        }
+      }));
+      const fileInput = document.getElementById("document-attachment-input");
+      if (fileInput) {
+        fileInput.value = "";
+      }
+      setBanner("Anexo enviado com sucesso para a solicitacao.");
+      await Promise.all([loadAllData(), loadDocumentAttachments(modal.item.id)]);
+    } catch (uploadError) {
+      setDocumentAttachments((current) => ({ ...current, uploading: false }));
+      setError(uploadError.message);
+    }
+  }
+
   async function handleDownloadFile(file) {
     try {
       const { blob, fileName } = await api.download(`/api/files/${file.id}/download`);
       downloadBlobFile(blob, fileName);
+      if (modal.section === "documents" && modal.item?.id && file.regulatory_document_id === modal.item.id) {
+        await loadDocumentAttachments(modal.item.id);
+      }
     } catch (downloadError) {
       setError(downloadError.message);
     }
@@ -1923,7 +2270,7 @@ export default function App() {
       return dueRowClass(row.end_date);
     }
     if (activeTab === "invoices") {
-      return dueRowClass(row.due_date);
+      return dueRowClass(row.due_date, getInvoiceDueMeta(row));
     }
     if (activeTab === "avcb" || activeTab === "clcb") {
       return dueRowClass(row.expiry_date);
@@ -2000,7 +2347,7 @@ export default function App() {
       { key: "invoice_number", label: "NF" },
       { key: "vendor_name", label: "Fornecedor" },
       { key: "unit_name", label: "Unidade" },
-      { key: "due_date", label: "Vencimento", render: (value) => dueCell(value) },
+      { key: "due_date", label: "Vencimento", render: (value, row) => dueCell(value, getInvoiceDueMeta(row)) },
       { key: "total_amount", label: "Valor", render: (value) => formatCurrency(value) },
       { key: "status", label: "Status", render: (value) => statusBadge(value) }
     ],
@@ -2042,6 +2389,23 @@ export default function App() {
     documents: modal.documentType || "Documento"
   };
 
+  const modalAttachments =
+    modal.section === "documents"
+      ? {
+          enabled: true,
+          documentId: modal.item?.id || null,
+          files: documentAttachments.files,
+          history: documentAttachments.history,
+          form: documentAttachments.form,
+          uploading: documentAttachments.uploading,
+          loading: documentAttachments.loading,
+          onChange: updateDocumentAttachmentField,
+          onUpload: handleDocumentAttachmentUpload,
+          onDownload: handleDownloadFile,
+          formatDateTime
+        }
+      : null;
+
   const searchPlaceholderMap = {
     operations: "Buscar operacoes...",
     reports: "Buscar relatorios...",
@@ -2055,6 +2419,12 @@ export default function App() {
     avcb: "Buscar pedidos ou documentos AVCB...",
     clcb: "Buscar pedidos ou documentos CLCB..."
   };
+
+  const showListFilterPanel =
+    activeTab !== "dashboard" &&
+    activeTab !== "reports" &&
+    activeTab !== "operations" &&
+    Boolean(listFilterPanels[activeDataKey]);
 
   return (
     <div className="app-shell">
@@ -2082,8 +2452,8 @@ export default function App() {
             <span>{user.email}</span>
           </div>
           <ThemeSelector theme={theme} onChange={setTheme} />
-          <button type="button" className="secondary-button secondary-button--dark" onClick={logout}>
-            Sair
+          <button type="button" className="secondary-button secondary-button--dark" onClick={handleUserSwitch}>
+            Deslogar
           </button>
         </div>
       </aside>
@@ -2097,6 +2467,58 @@ export default function App() {
 
           {activeTab !== "dashboard" && activeTab !== "reports" && activeTab !== "operations" ? (
             <div className="topbar-actions">
+              {showListFilterPanel ? (
+                <div className="topbar-filter-strip">
+                  {currentFilterFields.map((field) =>
+                    field.filterType === "date-range" ? (
+                      <div key={field.name} className="field topbar-filter-field topbar-filter-field--range">
+                        <span>{field.label}</span>
+                        <div className="topbar-filter-range">
+                          <input
+                            type="date"
+                            value={currentListFilters[`${field.name}_from`] || ""}
+                            onChange={(event) => updateListFilter(activeDataKey, `${field.name}_from`, event.target.value)}
+                          />
+                          <input
+                            type="date"
+                            value={currentListFilters[`${field.name}_to`] || ""}
+                            onChange={(event) => updateListFilter(activeDataKey, `${field.name}_to`, event.target.value)}
+                          />
+                        </div>
+                      </div>
+                    ) : field.filterType === "select" ? (
+                      <label key={field.name} className="field topbar-filter-field" htmlFor={`filter-${activeDataKey}-${field.name}`}>
+                        <span>{field.label}</span>
+                        <select
+                          id={`filter-${activeDataKey}-${field.name}`}
+                          value={currentListFilters[field.name] || ""}
+                          onChange={(event) => updateListFilter(activeDataKey, field.name, event.target.value)}
+                        >
+                          <option value="">Todos</option>
+                          {(field.options || []).map((option) => (
+                            <option key={`${field.name}-${option.value}`} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : (
+                      <label key={field.name} className="field topbar-filter-field" htmlFor={`filter-${activeDataKey}-${field.name}`}>
+                        <span>{field.label}</span>
+                        <input
+                          id={`filter-${activeDataKey}-${field.name}`}
+                          type={field.filterType === "number" ? "number" : "text"}
+                          value={currentListFilters[field.name] || ""}
+                          onChange={(event) => updateListFilter(activeDataKey, field.name, event.target.value)}
+                        />
+                      </label>
+                    )
+                  )}
+                  <button type="button" className="secondary-button topbar-filter-clear" onClick={() => clearListFilters(activeDataKey)}>
+                    Limpar
+                  </button>
+                </div>
+              ) : null}
               <input
                 className="search-input"
                 type="search"
@@ -2104,16 +2526,31 @@ export default function App() {
                 value={search[activeDataKey]}
                 onChange={(event) => setSearch((current) => ({ ...current, [activeDataKey]: event.target.value }))}
               />
+              <button
+                type="button"
+                className="secondary-button topbar-filter-button"
+                onClick={() => toggleListFilterPanel(activeDataKey)}
+              >
+                {showListFilterPanel ? "Ocultar filtros" : `Filtros${activeListFilterCount ? ` (${activeListFilterCount})` : ""}`}
+              </button>
               {currentCreateAction() ? (
                 <button type="button" className="primary-button topbar-create-button" onClick={currentCreateAction()}>
                   Novo registro
                 </button>
               ) : null}
+              <button type="button" className="secondary-button topbar-session-button" onClick={handleUserSwitch}>
+                Trocar usuario
+              </button>
             </div>
           ) : (
-            <button type="button" className="secondary-button" onClick={loadAllData}>
-              Atualizar dados
-            </button>
+            <div className="topbar-actions topbar-actions--compact">
+              <button type="button" className="secondary-button" onClick={loadAllData}>
+                Atualizar dados
+              </button>
+              <button type="button" className="secondary-button topbar-session-button" onClick={handleUserSwitch}>
+                Trocar usuario
+              </button>
+            </div>
           )}
         </header>
 
@@ -2170,11 +2607,11 @@ export default function App() {
                     { key: "invoice_number", label: "NF" },
                     { key: "vendor_name", label: "Fornecedor" },
                     { key: "unit_name", label: "Unidade" },
-                    { key: "due_date", label: "Vencimento", render: (value) => dueCell(value) }
+                    { key: "due_date", label: "Vencimento", render: (value, row) => dueCell(value, getInvoiceDueMeta(row)) }
                   ]}
                   rows={dashboard.pending_invoices}
                   emptyMessage="Nenhuma nota pendente no momento."
-                  getRowClassName={(row) => dueRowClass(row.due_date)}
+                  getRowClassName={(row) => dueRowClass(row.due_date, getInvoiceDueMeta(row))}
                 />
               </section>
 
@@ -2586,6 +3023,7 @@ export default function App() {
           onSubmit={saveCurrentItem}
           submitLabel={modal.item ? "Salvar alteracoes" : "Criar registro"}
           report={modalReport}
+          attachments={modalAttachments}
         />
       </main>
     </div>
