@@ -63,13 +63,13 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --page-bg:
-    radial-gradient(circle at top left, rgba(78, 98, 214, 0.22), transparent 34%),
-    radial-gradient(circle at bottom right, rgba(28, 163, 122, 0.14), transparent 28%),
-    linear-gradient(180deg, #060a12 0%, #0b1220 48%, #101923 100%);
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.08), transparent 34%),
+    radial-gradient(circle at bottom right, rgba(28, 163, 122, 0.12), transparent 28%),
+    linear-gradient(180deg, #030303 0%, #090909 48%, #111111 100%);
   --page-text: #edf3fb;
-  --bg-soft: rgba(16, 22, 34, 0.76);
-  --bg-strong: rgba(10, 14, 24, 0.94);
-  --panel-green: rgba(18, 38, 34, 0.4);
+  --bg-soft: rgba(17, 17, 17, 0.78);
+  --bg-strong: rgba(8, 8, 8, 0.94);
+  --panel-green: rgba(18, 38, 34, 0.34);
   --line: rgba(195, 211, 232, 0.12);
   --text-soft: #9aa9be;
   --accent: #35b097;
@@ -78,17 +78,17 @@
   --success-bg: rgba(53, 176, 151, 0.12);
   --warning-bg: rgba(224, 179, 83, 0.11);
   --danger-bg: rgba(255, 122, 122, 0.11);
-  --sidebar-bg: linear-gradient(180deg, rgba(13, 16, 27, 0.96) 0%, rgba(9, 12, 20, 0.98) 100%);
+  --sidebar-bg: linear-gradient(180deg, rgba(5, 5, 5, 0.97) 0%, rgba(12, 12, 12, 0.99) 100%);
   --hero-pill-bg: rgba(255, 255, 255, 0.06);
   --hero-pill-text: #dce9ff;
   --field-bg: rgba(255, 255, 255, 0.05);
   --option-bg: #111827;
   --option-text: #edf3fb;
-  --primary-button-bg: linear-gradient(135deg, rgba(44, 105, 197, 0.42), rgba(34, 155, 122, 0.34));
+  --primary-button-bg: linear-gradient(135deg, rgba(44, 44, 44, 0.46), rgba(34, 155, 122, 0.28));
   --secondary-button-text: #e3edf8;
   --ghost-button-text: #a8efd7;
   --nav-bg: rgba(255, 255, 255, 0.03);
-  --nav-active-bg: linear-gradient(135deg, rgba(54, 93, 178, 0.38), rgba(31, 129, 105, 0.3));
+  --nav-active-bg: linear-gradient(135deg, rgba(56, 56, 56, 0.4), rgba(31, 129, 105, 0.26));
   --segment-text: #e1eafa;
   --segment-active-text: #f2fffb;
   --status-success-text: #8ff0d6;
