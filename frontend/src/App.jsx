@@ -20,6 +20,12 @@ const tabs = [
   { id: "clcb", label: "CLCB" }
 ];
 
+const themeOptions = [
+  { id: "original", label: "Original" },
+  { id: "dark", label: "Dark" },
+  { id: "light", label: "Claro" }
+];
+
 const defaultDashboard = {
   counts: {
     vendors: 0,
@@ -335,7 +341,22 @@ function dueRowClass(value) {
   return "";
 }
 
-function LoginScreen({ onLogin, loading, error }) {
+function ThemeSelector({ theme, onChange, compact = false }) {
+  return (
+    <label className={`theme-switcher ${compact ? "theme-switcher--compact" : ""}`}>
+      <span>Tema</span>
+      <select value={theme} onChange={(event) => onChange(event.target.value)}>
+        {themeOptions.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function LoginScreen({ onLogin, loading, error, theme, onThemeChange }) {
   const [email, setEmail] = useState("superadm@repofiscal.local");
   const [password, setPassword] = useState("super123");
   const [submitting, setSubmitting] = useState(false);
@@ -369,7 +390,10 @@ function LoginScreen({ onLogin, loading, error }) {
 
       <section className="auth-panel auth-panel--form">
         <div>
-          <span className="eyebrow">Acesso</span>
+          <div className="auth-panel__topbar">
+            <span className="eyebrow">Acesso</span>
+            <ThemeSelector theme={theme} onChange={onThemeChange} compact />
+          </div>
           <h2>Entrar no sistema</h2>
           <p>Credenciais iniciais carregadas com o perfil super administrador.</p>
         </div>
@@ -501,6 +525,14 @@ function limitTimeline(items, emptyLabel) {
 
 export default function App() {
   const { user, loading: authLoading, login, logout } = useAuth();
+  const [theme, setTheme] = useState(() => {
+    if (typeof window === "undefined") {
+      return "original";
+    }
+
+    const savedTheme = window.localStorage.getItem("repofiscal-theme");
+    return themeOptions.some((option) => option.id === savedTheme) ? savedTheme : "original";
+  });
   const [activeTab, setActiveTab] = useState("dashboard");
   const [vendorView, setVendorView] = useState("vendors");
   const [loadingData, setLoadingData] = useState(false);
@@ -617,6 +649,12 @@ export default function App() {
       loadAllData();
     }
   }, [user]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
+    window.localStorage.setItem("repofiscal-theme", theme);
+  }, [theme]);
 
   const sectionTitle = useMemo(() => {
     if (activeTab === "vendors") {
@@ -1991,7 +2029,7 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginScreen onLogin={handleLogin} loading={authLoading} error={loginError} />;
+    return <LoginScreen onLogin={handleLogin} loading={authLoading} error={loginError} theme={theme} onThemeChange={setTheme} />;
   }
 
   const modalTitleMap = {
@@ -2043,6 +2081,7 @@ export default function App() {
             <strong>{user.name}</strong>
             <span>{user.email}</span>
           </div>
+          <ThemeSelector theme={theme} onChange={setTheme} />
           <button type="button" className="secondary-button secondary-button--dark" onClick={logout}>
             Sair
           </button>
