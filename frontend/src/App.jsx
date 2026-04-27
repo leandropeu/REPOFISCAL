@@ -1853,6 +1853,39 @@ export default function App() {
     }));
   }
 
+  function clearCurrentFilters() {
+    if (activeTab === "reports") {
+      clearReportFilters();
+      return;
+    }
+    if (activeTab === "dashboard" || activeTab === "operations") {
+      setListFilters(getInitialListFilters());
+      return;
+    }
+    clearListFilters(activeDataKey);
+  }
+
+  function openDashboardList(section, options = {}) {
+    const targetDataKey = options.vendorView || section;
+    setBanner("");
+    setError("");
+    setSearch((current) => ({ ...current, [targetDataKey]: "" }));
+    setListFilters((current) => ({
+      ...current,
+      [targetDataKey]: options.filters || {}
+    }));
+    setListFilterPanels((current) => ({
+      ...current,
+      [targetDataKey]: Boolean(options.filters && Object.keys(options.filters).length)
+    }));
+    if (options.vendorView) {
+      setVendorView(options.vendorView);
+      startTransition(() => setActiveTab("vendors"));
+      return;
+    }
+    startTransition(() => setActiveTab(section));
+  }
+
   function toggleListFilterPanel(section) {
     setListFilterPanels((current) => ({
       ...current,
@@ -2533,22 +2566,22 @@ export default function App() {
               >
                 {showListFilterPanel ? "Ocultar filtros" : `Filtros${activeListFilterCount ? ` (${activeListFilterCount})` : ""}`}
               </button>
+              <button type="button" className="secondary-button topbar-filter-clear" onClick={clearCurrentFilters}>
+                Limpar filtros
+              </button>
               {currentCreateAction() ? (
                 <button type="button" className="primary-button topbar-create-button" onClick={currentCreateAction()}>
                   Novo registro
                 </button>
               ) : null}
-              <button type="button" className="secondary-button topbar-session-button" onClick={handleUserSwitch}>
-                Trocar usuario
-              </button>
             </div>
           ) : (
             <div className="topbar-actions topbar-actions--compact">
               <button type="button" className="secondary-button" onClick={loadAllData}>
                 Atualizar dados
               </button>
-              <button type="button" className="secondary-button topbar-session-button" onClick={handleUserSwitch}>
-                Trocar usuario
+              <button type="button" className="secondary-button topbar-filter-clear" onClick={clearCurrentFilters}>
+                Limpar filtros
               </button>
             </div>
           )}
@@ -2560,18 +2593,18 @@ export default function App() {
         {activeTab === "dashboard" ? (
           <>
             <section className="card-grid card-grid--six">
-              <StatCard title="Fornecedores" value={dashboard.counts.vendors} tone="info" detail="Servico e produto" />
-              <StatCard title="Profissionais" value={dashboard.counts.professionals} tone="info" detail="Equipe cadastrada" />
-              <StatCard title="Usuarios ativos" value={dashboard.counts.active_users} tone="info" detail="Acessos liberados" />
-              <StatCard title="Arquivos" value={dashboard.counts.files} tone="info" detail="PDF, CSV, XML e Excel" />
-              <StatCard title="Contratos ativos" value={dashboard.counts.active_contracts} tone="warning" detail="Com monitoramento" />
-              <StatCard title="Notas pendentes" value={dashboard.counts.pending_invoices} tone="danger" detail="Pendente ou analise" />
+              <StatCard title="Fornecedores" value={dashboard.counts.vendors} tone="info" detail="Servico e produto" onClick={() => openDashboardList("vendors", { vendorView: "vendors" })} />
+              <StatCard title="Profissionais" value={dashboard.counts.professionals} tone="info" detail="Equipe cadastrada" onClick={() => openDashboardList("vendors", { vendorView: "professionals" })} />
+              <StatCard title="Usuarios ativos" value={dashboard.counts.active_users} tone="info" detail="Acessos liberados" onClick={() => openDashboardList("users", { filters: { active: "true" } })} />
+              <StatCard title="Arquivos" value={dashboard.counts.files} tone="info" detail="PDF, CSV, XML e Excel" onClick={() => openDashboardList("files")} />
+              <StatCard title="Contratos ativos" value={dashboard.counts.active_contracts} tone="warning" detail="Com monitoramento" onClick={() => openDashboardList("contracts", { filters: { status: "active" } })} />
+              <StatCard title="Notas pendentes" value={dashboard.counts.pending_invoices} tone="danger" detail="Pendente ou analise" onClick={() => openDashboardList("invoices", { filters: { status: "pending" } })} />
             </section>
 
             <section className="card-grid card-grid--single">
-              <StatCard title="AVCB alerta" value={dashboard.counts.avcb_attention} tone="warning" detail="Ate 60 dias ou vencido" />
-              <StatCard title="CLCB alerta" value={dashboard.counts.clcb_attention} tone="warning" detail="Ate 60 dias ou vencido" />
-              <StatCard title="Notas pagas" value={formatCurrency(dashboard.counts.invoices_paid_total)} tone="success" detail="Total financeiro quitado" />
+              <StatCard title="AVCB alerta" value={dashboard.counts.avcb_attention} tone="warning" detail="Ate 60 dias ou vencido" onClick={() => openDashboardList("avcb")} />
+              <StatCard title="CLCB alerta" value={dashboard.counts.clcb_attention} tone="warning" detail="Ate 60 dias ou vencido" onClick={() => openDashboardList("clcb")} />
+              <StatCard title="Notas pagas" value={formatCurrency(dashboard.counts.invoices_paid_total)} tone="success" detail="Total financeiro quitado" onClick={() => openDashboardList("invoices", { filters: { status: "paid" } })} />
             </section>
 
             <section className="panel-grid panel-grid--triple">
