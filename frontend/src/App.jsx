@@ -607,6 +607,52 @@ function printRows(title, rows, columns, filterSummary = []) {
   printWindow.print();
 }
 
+function printForm(title, fields, filterSummary = []) {
+  const printWindow = window.open("", "_blank", "width=1100,height=800");
+  if (!printWindow) {
+    throw new Error("O navegador bloqueou a janela de impressao.");
+  }
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>${escapeXmlValue(title)}</title>
+        <style>
+          * { box-sizing: border-box; }
+          body { font-family: Arial, sans-serif; color: #111; margin: 24px; }
+          h1 { font-size: 21px; margin: 0 0 6px; }
+          p { margin: 0 0 18px; color: #555; font-size: 12px; }
+          .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+          .field { border: 1px solid #cfd7df; border-radius: 8px; padding: 8px 10px; min-height: 58px; page-break-inside: avoid; }
+          .field--full { grid-column: 1 / -1; min-height: 94px; }
+          .label { display: block; color: #4d5a66; font-size: 10px; font-weight: 700; text-transform: uppercase; margin-bottom: 6px; }
+          .value { display: block; font-size: 13px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+          .empty { color: #89939e; }
+          @media print {
+            body { margin: 16mm; }
+            .form-grid { gap: 8px; }
+          }
+        </style>
+      </head>
+      <body>
+        <h1>${escapeXmlValue(title)}</h1>
+        <p>Gerado em ${escapeXmlValue(new Date().toLocaleString("pt-BR"))}${filterSummary.length ? ` | ${escapeXmlValue(filterSummary.join(" | "))}` : ""}</p>
+        <section class="form-grid">
+          ${fields.map((field) => `
+            <article class="field ${field.fullWidth || field.type === "textarea" ? "field--full" : ""}">
+              <span class="label">${escapeXmlValue(field.label)}</span>
+              <span class="value ${field.value === "" || field.value === null || typeof field.value === "undefined" ? "empty" : ""}">${escapeXmlValue(field.value === "" || field.value === null || typeof field.value === "undefined" ? "-" : field.value)}</span>
+            </article>
+          `).join("")}
+        </section>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
 function exportRowsByFormat({ fileBase, title, rows, columns, format, filterSummary = [] }) {
   const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
   const suffix = filterSummary.length ? "-filtrado" : "";
@@ -884,6 +930,8 @@ export default function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [tableExportFormat, setTableExportFormat] = useState("csv");
   const [modalExportFormat, setModalExportFormat] = useState("csv");
+  const [extractDialogOpen, setExtractDialogOpen] = useState(false);
+  const [selectedRecords, setSelectedRecords] = useState({});
   const [reportExportFormats, setReportExportFormats] = useState({});
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadForm, setUploadForm] = useState({
@@ -2463,29 +2511,108 @@ export default function App() {
     }
   }
 
+  function getFormSectionFromDataKey(dataKey) {
+    if (dataKey === "avcb" || dataKey === "clcb") {
+      return "documents";
+    }
+    return dataKey;
+  }
+
+  function getExportTitleFromDataKey(dataKey) {
+    if (dataKey === "avcb" || dataKey === "clcb") {
+      return dataKey.toUpperCase();
+    }
+    return tabs.find((tab) => tab.id === dataKey)?.label || "Registro";
+  }
+
+  function getRecordDisplayName(record) {
+    if (!record) {
+      return "Nenhuma linha selecionada";
+    }
+    return (
+      record.name ||
+      record.title ||
+      record.invoice_number ||
+      record.document_number ||
+      record.request_number ||
+      record.original_name ||
+      record.email ||
+      `Registro ${record.id}`
+    );
+  }
+
+  function rememberSelectedRecord(dataKey, item) {
+    setSelectedRecords((current) => ({
+      ...current,
+      [dataKey]: item
+    }));
+  }
+
+  function getDisplayValueForField(field, record) {
+    const value = record[field.name];
+    if (field.type === "select") {
+      return field.options?.find((option) => String(option.value) === String(value))?.label || value || "";
+    }
+    if (field.type === "checkbox") {
+      return value ? "Sim" : "Nao";
+    }
+    if (field.type === "currency") {
+      return formatCurrency(parseCurrencyValue(value));
+    }
+    if (field.type === "date") {
+      return value ? formatDate(value) : "";
+    }
+    return value ?? "";
+  }
+
+  function buildFormExportPayload(section, record, fallbackColumns = []) {
+    if (!section || !record) {
+      return { columns: [], rows: [], fields: [] };
+    }
+
+    const fields = fieldsBySection[section] || [];
+    if (!fields.length) {
+      const columns = normalizeExportColumns(fallbackColumns);
+      const row = {};
+      columns.forEach((column) => {
+        row[column.key] = record[column.key] ?? "";
+      });
+      return {
+        columns,
+        rows: [row],
+        fields: columns.map((column) => ({
+          label: column.label,
+          value: row[column.key],
+          fullWidth: false,
+          type: "text"
+        }))
+      };
+    }
+
+    const columns = fields.map((field) => ({ key: field.name, label: field.label }));
+    const row = {};
+    const printableFields = [];
+
+    fields.forEach((field) => {
+      const value = getDisplayValueForField(field, record);
+      row[field.name] = value;
+      printableFields.push({
+        label: field.label,
+        value,
+        fullWidth: Boolean(field.fullWidth),
+        type: field.type || "text"
+      });
+    });
+
+    return { columns, rows: [row], fields: printableFields };
+  }
+
   function getModalExportPayload() {
     if (!modal.section) {
       return { columns: [], rows: [] };
     }
 
-    const fields = fieldsBySection[modal.section] || [];
-    const columns = fields.map((field) => ({ key: field.name, label: field.label }));
-    const row = {};
-
-    fields.forEach((field) => {
-      const value = formData[field.name];
-      if (field.type === "select") {
-        row[field.name] = field.options?.find((option) => String(option.value) === String(value))?.label || value || "";
-        return;
-      }
-      if (field.type === "checkbox") {
-        row[field.name] = value ? "Sim" : "Nao";
-        return;
-      }
-      row[field.name] = value ?? "";
-    });
-
-    return { columns, rows: [row] };
+    return buildFormExportPayload(modal.section, formData, columnsByView[modal.section] || []);
   }
 
   function handleExportModalRecord(format) {
@@ -2498,18 +2625,81 @@ export default function App() {
 
     try {
       const payload = getModalExportPayload();
-      exportRowsByFormat({
-        fileBase: `repofiscal-${modal.section}-${modal.item?.id || "novo"}`,
-        title: `${modalTitleMap[modal.section] || "Registro"} ${modal.item?.id || ""}`.trim(),
-        rows: payload.rows,
-        columns: payload.columns,
-        format,
-        filterSummary: []
-      });
+      const title = `${modalTitleMap[modal.section] || "Registro"} ${modal.item?.id || ""}`.trim();
+      if (format === "pdf") {
+        printForm(title, payload.fields, []);
+      } else {
+        exportRowsByFormat({
+          fileBase: `repofiscal-${modal.section}-${modal.item?.id || "novo"}`,
+          title,
+          rows: payload.rows,
+          columns: payload.columns,
+          format,
+          filterSummary: []
+        });
+      }
       setBanner(`Registro extraido com sucesso em ${format.toUpperCase()}.`);
     } catch (exportError) {
       setError(exportError.message || "Nao foi possivel extrair o registro.");
     }
+  }
+
+  function handleExportSelectedRecord() {
+    const selectedRecord = selectedRecords[activeDataKey];
+    if (!selectedRecord) {
+      setError("Clique em uma linha da tabela antes de extrair o formulario.");
+      setExtractDialogOpen(false);
+      return;
+    }
+
+    const stillVisible = currentRows.some((row) => String(row.id) === String(selectedRecord.id));
+    if (!stillVisible) {
+      setError("A linha selecionada nao esta visivel com os filtros atuais. Clique novamente em uma linha da tabela.");
+      setExtractDialogOpen(false);
+      return;
+    }
+
+    const formSection = getFormSectionFromDataKey(activeDataKey);
+    const payload = buildFormExportPayload(formSection, selectedRecord, columnsByView[activeDataKey] || []);
+
+    if (!payload.rows.length) {
+      setError("Esta pagina nao possui formulario para extrair.");
+      setExtractDialogOpen(false);
+      return;
+    }
+
+    setBanner("");
+    setError("");
+
+    try {
+      const title = `${getExportTitleFromDataKey(activeDataKey)} ${selectedRecord.id}`.trim();
+      if (tableExportFormat === "pdf") {
+        printForm(title, payload.fields, ["Formulario da linha selecionada"]);
+      } else {
+        exportRowsByFormat({
+          fileBase: `repofiscal-${activeDataKey}-formulario-${selectedRecord.id}`,
+          title,
+          rows: payload.rows,
+          columns: payload.columns,
+          format: tableExportFormat,
+          filterSummary: ["Formulario da linha selecionada"]
+        });
+      }
+      setBanner(`Formulario "${getExportTitleFromDataKey(activeDataKey)}" extraido com sucesso em ${tableExportFormat.toUpperCase()}.`);
+    } catch (exportError) {
+      setError(exportError.message || "Nao foi possivel extrair o formulario.");
+    } finally {
+      setExtractDialogOpen(false);
+    }
+  }
+
+  function handleTopExtractChoice(type) {
+    if (type === "list") {
+      setExtractDialogOpen(false);
+      handleExportCurrentRows();
+      return;
+    }
+    handleExportSelectedRecord();
   }
 
   function currentCreateAction() {
@@ -2529,6 +2719,7 @@ export default function App() {
   }
 
   function currentEditAction(item) {
+    rememberSelectedRecord(activeDataKey, item);
     if (activeTab === "users") {
       openModal("users", item);
       return;
@@ -2548,6 +2739,7 @@ export default function App() {
     if (activeTab === "files" || activeTab === "reports" || activeTab === "operations") {
       return;
     }
+    rememberSelectedRecord(activeDataKey, item);
     if (activeTab === "users") {
       openModal("users", item, { mode: "view" });
       return;
@@ -2880,7 +3072,7 @@ export default function App() {
                     <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
-                <button type="button" className="secondary-button" onClick={handleExportCurrentRows}>
+                <button type="button" className="secondary-button" onClick={() => setExtractDialogOpen(true)}>
                   Extrair
                 </button>
               </div>
@@ -3339,6 +3531,8 @@ export default function App() {
                 columns={columnsByView.files}
                 rows={currentRows}
                 emptyMessage="Nenhum arquivo encontrado."
+                onRowSelect={(item) => rememberSelectedRecord(activeDataKey, item)}
+                selectedRowId={selectedRecords[activeDataKey]?.id}
                 onDelete={currentDeleteAction}
               />
             </section>
@@ -3360,6 +3554,8 @@ export default function App() {
               columns={columnsByView[activeDataKey]}
               rows={currentRows}
               emptyMessage="Nenhum registro encontrado."
+              onRowSelect={(item) => rememberSelectedRecord(activeDataKey, item)}
+              selectedRowId={selectedRecords[activeDataKey]?.id}
               onView={currentViewAction}
               onEdit={activeDataKey === "users" && user.role !== "superadm" ? null : currentEditAction}
               onDelete={activeDataKey === "users" && user.role !== "superadm" ? null : currentDeleteAction}
@@ -3382,6 +3578,41 @@ export default function App() {
           readOnly={modalReadOnly}
           actions={modalActionTools}
         />
+
+        {extractDialogOpen ? (
+          <div className="modal-backdrop" role="presentation" onClick={() => setExtractDialogOpen(false)}>
+            <div className="extract-choice-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-card__header">
+                <div>
+                  <span className="eyebrow">Extrair</span>
+                  <h3>O que voce quer extrair?</h3>
+                </div>
+                <button type="button" className="ghost-button" onClick={() => setExtractDialogOpen(false)}>
+                  Fechar
+                </button>
+              </div>
+
+              <div className="extract-choice-grid">
+                <button type="button" className="extract-choice-button" onClick={() => handleTopExtractChoice("list")} disabled={!currentRows.length}>
+                  <strong>Lista da tela</strong>
+                  <span>Extrai exatamente a lista visivel nesta pagina, respeitando busca, filtros e o tipo escolhido.</span>
+                  <small>{currentRows.length} registro(s) visivel(is)</small>
+                </button>
+
+                <button
+                  type="button"
+                  className="extract-choice-button"
+                  onClick={() => handleTopExtractChoice("form")}
+                  disabled={!selectedRecords[activeDataKey]}
+                >
+                  <strong>Formulario selecionado</strong>
+                  <span>Extrai os campos do formulario da linha que voce clicou por ultimo.</span>
+                  <small>{getRecordDisplayName(selectedRecords[activeDataKey])}</small>
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {deleteElevation.open ? (
           <div className="modal-backdrop" role="presentation" onClick={closeDeleteElevation}>

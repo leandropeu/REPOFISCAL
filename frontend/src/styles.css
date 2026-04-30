@@ -1087,6 +1087,11 @@ button {
   background: rgba(255, 255, 255, 0.05);
 }
 
+.data-table__row--selected {
+  background: rgba(55, 214, 201, 0.1);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .data-table th {
   font-size: 0.68rem;
   text-transform: uppercase;
@@ -1196,6 +1201,64 @@ button {
   background: var(--modal-surface);
   border: 1px solid rgba(173, 204, 235, 0.12);
   box-shadow: var(--shadow);
+}
+
+.extract-choice-card {
+  width: min(620px, calc(100vw - 20px));
+  border-radius: 16px;
+  padding: 12px;
+  background: var(--modal-surface);
+  border: 1px solid rgba(173, 204, 235, 0.12);
+  box-shadow: var(--shadow);
+}
+
+.extract-choice-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding-top: 12px;
+}
+
+.extract-choice-button {
+  min-height: 150px;
+  border: 1px solid rgba(173, 204, 235, 0.14);
+  border-radius: 12px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  text-align: left;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.extract-choice-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(55, 214, 201, 0.1);
+}
+
+.extract-choice-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.extract-choice-button strong {
+  font-size: 0.96rem;
+}
+
+.extract-choice-button span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.extract-choice-button small {
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
 }
 
 .elevation-form {
@@ -1809,5 +1872,9 @@ button {
   .report-card__actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .extract-choice-grid {
+    grid-template-columns: 1fr;
   }
 }

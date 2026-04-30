@@ -3,6 +3,8 @@ export default function DataTable({
   rows,
   emptyMessage,
   onView,
+  onRowSelect,
+  selectedRowId,
   onEdit,
   onDelete,
   getRowClassName
@@ -26,8 +28,15 @@ export default function DataTable({
           {rows.map((row) => (
             <tr
               key={row.id}
-              className={`${getRowClassName ? getRowClassName(row) : ""} ${onView ? "data-table__row--clickable" : ""}`}
-              onClick={onView ? () => onView(row) : undefined}
+              className={[
+                getRowClassName ? getRowClassName(row) : "",
+                onView || onRowSelect ? "data-table__row--clickable" : "",
+                selectedRowId && String(selectedRowId) === String(row.id) ? "data-table__row--selected" : ""
+              ].filter(Boolean).join(" ")}
+              onClick={onView || onRowSelect ? () => {
+                onRowSelect?.(row);
+                onView?.(row);
+              } : undefined}
             >
               {columns.map((column) => (
                 <td key={`${row.id}-${column.key}`}>
