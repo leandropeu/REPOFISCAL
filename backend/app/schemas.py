@@ -121,3 +121,8 @@ class FileRecordPayload(BaseModel):
     contract_id: int | None = None
     invoice_id: int | None = None
     regulatory_document_id: int | None = None
+
+
+class DeleteElevationPayload(BaseModel):
+    email: str | None = None
+    password: str | None = None

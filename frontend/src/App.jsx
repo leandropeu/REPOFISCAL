@@ -14,7 +14,7 @@ const tabs = [
   { id: "files", label: "Arquivos" },
   { id: "vendors", label: "Fornecedores" },
   { id: "units", label: "Unidades" },
-  { id: "contracts", label: "Contratos" },
+  { id: "contracts", label: "Orcamentos" },
   { id: "invoices", label: "Notas Fiscais" },
   { id: "avcb", label: "AVCB" },
   { id: "clcb", label: "CLCB" }
@@ -29,7 +29,6 @@ const themeOptions = [
 const defaultDashboard = {
   counts: {
     vendors: 0,
-    professionals: 0,
     active_users: 0,
     files: 0,
     units: 0,
@@ -48,7 +47,6 @@ const defaultDashboard = {
 const emptyEntities = {
   users: [],
   vendors: [],
-  professionals: [],
   units: [],
   contracts: [],
   invoices: [],
@@ -85,9 +83,11 @@ const defaultDocumentAttachments = {
   loading: false,
   uploading: false,
   files: [],
+  invoices: [],
   history: [],
   form: {
     file: null,
+    import_format: "auto",
     category: "",
     notes: ""
   }
@@ -109,17 +109,6 @@ const initialForms = {
     email: "",
     phone: "",
     status: "active",
-    notes: ""
-  },
-  professionals: {
-    vendor_id: "",
-    name: "",
-    role: "",
-    document: "",
-    license_number: "",
-    email: "",
-    phone: "",
-    active: true,
     notes: ""
   },
   units: {
@@ -184,7 +173,6 @@ const initialForms = {
 const entityPath = {
   users: "/api/users",
   vendors: "/api/vendors",
-  professionals: "/api/professionals",
   units: "/api/units",
   contracts: "/api/contracts",
   invoices: "/api/invoices",
@@ -192,7 +180,24 @@ const entityPath = {
   files: "/api/files"
 };
 
-const fileExtensionsLabel = ".pdf, .csv, .xml, .xlsx, .xls";
+const fileExtensionsLabel = ".pdf, .csv, .xml, .txt, .xlsx, .xls";
+
+const exportFormatOptions = [
+  { value: "csv", label: "CSV" },
+  { value: "xml", label: "XML" },
+  { value: "txt", label: "TXT" },
+  { value: "xls", label: "Excel" },
+  { value: "pdf", label: "PDF / imprimir" }
+];
+
+const importFormatOptions = [
+  { value: "auto", label: "Detectar pelo arquivo", accept: ".pdf,.csv,.xml,.txt,.xlsx,.xls" },
+  { value: "pdf", label: "PDF", accept: ".pdf" },
+  { value: "xml", label: "XML", accept: ".xml" },
+  { value: "csv", label: "CSV", accept: ".csv" },
+  { value: "txt", label: "TXT", accept: ".txt" },
+  { value: "xls", label: "Excel", accept: ".xlsx,.xls" }
+];
 
 const typeLabels = {
   service: "Servico",
@@ -222,6 +227,27 @@ const currencyFormatter = new Intl.NumberFormat("pt-BR", {
 
 function formatCurrency(value) {
   return currencyFormatter.format(Number(value || 0));
+}
+
+function parseCurrencyValue(value) {
+  if (typeof value === "number") {
+    return value;
+  }
+  let normalized = String(value || "").replace(/[^\d,.-]/g, "");
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot
+      ? normalized.replace(/\./g, "").replace(",", ".")
+      : normalized.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    const decimalPart = normalized.slice(lastDot + 1);
+    normalized = decimalPart.length === 2 ? normalized.replace(/,/g, "") : normalized.replace(/\./g, "");
+  }
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function parseDateValue(value) {
@@ -260,6 +286,10 @@ function formatFileSize(sizeBytes) {
     return `${(size / 1024).toFixed(1)} KB`;
   }
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function getImportAccept(format) {
+  return importFormatOptions.find((option) => option.value === format)?.accept || importFormatOptions[0].accept;
 }
 
 function formatSnapshotKey(value) {
@@ -473,9 +503,10 @@ function escapeCsvValue(value) {
 }
 
 function exportRowsAsCsv(fileName, rows, columns) {
-  const header = columns.map((column) => escapeCsvValue(column.label)).join(";");
+  const normalizedColumns = normalizeExportColumns(columns);
+  const header = normalizedColumns.map((column) => escapeCsvValue(column.label)).join(";");
   const lines = rows.map((row) =>
-    columns
+    normalizedColumns
       .map((column) => escapeCsvValue(column.format ? column.format(row[column.key], row) : row[column.key]))
       .join(";")
   );
@@ -485,6 +516,119 @@ function exportRowsAsCsv(fileName, rows, columns) {
 
 function exportRowsAsJson(fileName, rows) {
   downloadTextFile(JSON.stringify(rows, null, 2), fileName, "application/json;charset=utf-8");
+}
+
+function escapeXmlValue(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function normalizeExportColumns(columns) {
+  return columns.filter((column) => column.key !== "download");
+}
+
+function exportRowsAsXml(fileName, rows, columns, rootName = "registros") {
+  const normalizedColumns = normalizeExportColumns(columns);
+  const lines = [
+    "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+    `<${rootName}>`,
+    ...rows.map((row) => [
+      "  <registro>",
+      ...normalizedColumns.map((column) => `    <${column.key}>${escapeXmlValue(row[column.key])}</${column.key}>`),
+      "  </registro>"
+    ].join("\n")),
+    `</${rootName}>`
+  ];
+  downloadTextFile(lines.join("\n"), fileName, "application/xml;charset=utf-8");
+}
+
+function exportRowsAsTxt(fileName, rows, columns) {
+  const normalizedColumns = normalizeExportColumns(columns);
+  const header = normalizedColumns.map((column) => column.label).join("\t");
+  const lines = rows.map((row) => normalizedColumns.map((column) => row[column.key] ?? "").join("\t"));
+  downloadTextFile([header, ...lines].join("\n"), fileName, "text/plain;charset=utf-8");
+}
+
+function exportRowsAsExcel(fileName, rows, columns, title = "Relatorio") {
+  const normalizedColumns = normalizeExportColumns(columns);
+  const html = `
+    <html>
+      <head><meta charset="UTF-8" /></head>
+      <body>
+        <table>
+          <caption>${escapeXmlValue(title)}</caption>
+          <thead><tr>${normalizedColumns.map((column) => `<th>${escapeXmlValue(column.label)}</th>`).join("")}</tr></thead>
+          <tbody>
+            ${rows.map((row) => `<tr>${normalizedColumns.map((column) => `<td>${escapeXmlValue(row[column.key])}</td>`).join("")}</tr>`).join("")}
+          </tbody>
+        </table>
+      </body>
+    </html>
+  `;
+  downloadTextFile(html, fileName, "application/vnd.ms-excel;charset=utf-8");
+}
+
+function printRows(title, rows, columns, filterSummary = []) {
+  const normalizedColumns = normalizeExportColumns(columns);
+  const printWindow = window.open("", "_blank", "width=1100,height=800");
+  if (!printWindow) {
+    throw new Error("O navegador bloqueou a janela de impressao.");
+  }
+
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>${escapeXmlValue(title)}</title>
+        <style>
+          body { font-family: Arial, sans-serif; color: #111; margin: 24px; }
+          h1 { font-size: 20px; margin: 0 0 8px; }
+          p { margin: 0 0 14px; color: #555; font-size: 12px; }
+          table { width: 100%; border-collapse: collapse; font-size: 11px; }
+          th, td { border: 1px solid #ccc; padding: 6px; text-align: left; vertical-align: top; }
+          th { background: #f1f3f5; }
+        </style>
+      </head>
+      <body>
+        <h1>${escapeXmlValue(title)}</h1>
+        <p>Gerado em ${escapeXmlValue(new Date().toLocaleString("pt-BR"))}${filterSummary.length ? ` | ${escapeXmlValue(filterSummary.join(" | "))}` : ""}</p>
+        <table>
+          <thead><tr>${normalizedColumns.map((column) => `<th>${escapeXmlValue(column.label)}</th>`).join("")}</tr></thead>
+          <tbody>${rows.map((row) => `<tr>${normalizedColumns.map((column) => `<td>${escapeXmlValue(row[column.key])}</td>`).join("")}</tr>`).join("")}</tbody>
+        </table>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
+
+function exportRowsByFormat({ fileBase, title, rows, columns, format, filterSummary = [] }) {
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const suffix = filterSummary.length ? "-filtrado" : "";
+  const fileNameBase = `${fileBase}${suffix}-${timestamp}`;
+
+  if (format === "xml") {
+    exportRowsAsXml(`${fileNameBase}.xml`, rows, columns, "repofiscal");
+    return;
+  }
+  if (format === "txt") {
+    exportRowsAsTxt(`${fileNameBase}.txt`, rows, columns);
+    return;
+  }
+  if (format === "xls") {
+    exportRowsAsExcel(`${fileNameBase}.xls`, rows, columns, title);
+    return;
+  }
+  if (format === "pdf") {
+    printRows(title, rows, columns, filterSummary);
+    return;
+  }
+  exportRowsAsCsv(`${fileNameBase}.csv`, rows, columns);
 }
 
 function exportReportAsCsv(fileName, report, filterSummary) {
@@ -624,7 +768,6 @@ function getInitialListFilters() {
     users: {},
     files: {},
     vendors: {},
-    professionals: {},
     units: {},
     contracts: {},
     invoices: {},
@@ -689,7 +832,6 @@ export default function App() {
     return themeOptions.some((option) => option.id === savedTheme) ? savedTheme : "original";
   });
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [vendorView, setVendorView] = useState("vendors");
   const [loadingData, setLoadingData] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [banner, setBanner] = useState("");
@@ -711,7 +853,6 @@ export default function App() {
     users: "",
     files: "",
     vendors: "",
-    professionals: "",
     units: "",
     contracts: "",
     invoices: "",
@@ -723,19 +864,31 @@ export default function App() {
     users: false,
     files: false,
     vendors: false,
-    professionals: false,
     units: false,
     contracts: false,
     invoices: false,
     avcb: false,
     clcb: false
   });
-  const [modal, setModal] = useState({ section: null, item: null, documentType: null });
+  const [modal, setModal] = useState({ section: null, item: null, documentType: null, mode: "edit" });
+  const [deleteElevation, setDeleteElevation] = useState({
+    open: false,
+    section: null,
+    item: null,
+    email: "",
+    password: "",
+    loading: false
+  });
   const [formData, setFormData] = useState({});
   const [documentAttachments, setDocumentAttachments] = useState(defaultDocumentAttachments);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [tableExportFormat, setTableExportFormat] = useState("csv");
+  const [modalExportFormat, setModalExportFormat] = useState("csv");
+  const [reportExportFormats, setReportExportFormats] = useState({});
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     file: null,
+    import_format: "auto",
     category: "",
     notes: "",
     vendor_id: "",
@@ -745,7 +898,7 @@ export default function App() {
     regulatory_document_id: ""
   });
 
-  const activeDataKey = activeTab === "vendors" ? vendorView : activeTab;
+  const activeDataKey = activeTab;
   const deferredSearch = useDeferredValue(search[activeDataKey] || "");
   const visibleTabs = useMemo(
     () =>
@@ -769,7 +922,6 @@ export default function App() {
         auditLogs,
         users,
         vendors,
-        professionals,
         units,
         contracts,
         invoices,
@@ -782,7 +934,6 @@ export default function App() {
         user.role === "adm" || user.role === "superadm" ? api.get("/api/system/audit-logs?limit=120") : Promise.resolve(null),
         user.role === "adm" || user.role === "superadm" ? api.get("/api/users") : Promise.resolve([]),
         api.get("/api/vendors"),
-        api.get("/api/professionals"),
         api.get("/api/units"),
         api.get("/api/contracts"),
         api.get("/api/invoices"),
@@ -791,7 +942,7 @@ export default function App() {
       ]);
 
       setDashboard(dashboardData);
-      setEntities({ users, vendors, professionals, units, contracts, invoices, documents, files });
+      setEntities({ users, vendors, units, contracts, invoices, documents, files });
       setOperations(
         systemStatus
           ? {
@@ -826,12 +977,28 @@ export default function App() {
 
   useEffect(() => {
     if (modal.section === "documents" && modal.item?.id) {
-      loadDocumentAttachments(modal.item.id);
+      loadModalAttachments("documents", modal.item.id);
+      return;
+    }
+    if (modal.section === "contracts" && modal.item?.id) {
+      loadModalAttachments("contracts", modal.item.id);
       return;
     }
 
     setDocumentAttachments(defaultDocumentAttachments);
   }, [modal.section, modal.item?.id]);
+
+  const modalRelatedFiles = useMemo(() => {
+    if (!modal.section || !modal.item?.id) {
+      return [];
+    }
+
+    return entities.files.filter((file) =>
+      (modal.section === "vendors" && file.vendor_id === modal.item.id) ||
+      (modal.section === "units" && file.unit_id === modal.item.id) ||
+      (modal.section === "invoices" && file.invoice_id === modal.item.id)
+    );
+  }, [entities.files, modal.item?.id, modal.section]);
 
   async function handleUserSwitch() {
     setBanner("");
@@ -839,12 +1006,7 @@ export default function App() {
     await logout();
   }
 
-  const sectionTitle = useMemo(() => {
-    if (activeTab === "vendors") {
-      return vendorView === "vendors" ? "Fornecedores" : "Profissionais";
-    }
-    return tabs.find((tab) => tab.id === activeTab)?.label || "Dashboard";
-  }, [activeTab, vendorView]);
+  const sectionTitle = useMemo(() => tabs.find((tab) => tab.id === activeTab)?.label || "Dashboard", [activeTab]);
 
   const selectOptions = useMemo(() => {
     const vendorOptions = entities.vendors.map((vendor) => ({
@@ -859,10 +1021,6 @@ export default function App() {
       value: String(contract.id),
       label: `${contract.contract_number || "Sem numero"} - ${contract.title}`
     }));
-    const professionalOptions = entities.professionals.map((professional) => ({
-      value: String(professional.id),
-      label: `${professional.name} - ${professional.vendor_name}`
-    }));
     const invoiceOptions = entities.invoices.map((invoice) => ({
       value: String(invoice.id),
       label: `${invoice.invoice_number} - ${invoice.vendor_name}`
@@ -872,7 +1030,7 @@ export default function App() {
       label: `${document.document_type} - ${document.document_number || document.request_number || "Sem numero"}`
     }));
 
-    return { vendorOptions, unitOptions, contractOptions, professionalOptions, invoiceOptions, regulatoryOptions };
+    return { vendorOptions, unitOptions, contractOptions, invoiceOptions, regulatoryOptions };
   }, [entities]);
 
   const fieldsBySection = useMemo(
@@ -924,17 +1082,6 @@ export default function App() {
         },
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
-      professionals: [
-        { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
-        { name: "name", label: "Nome do profissional", placeholder: "Eng. Maria Souza" },
-        { name: "role", label: "Funcao", placeholder: "Engenheiro, tecnico, consultor" },
-        { name: "document", label: "Documento", placeholder: "CPF ou CNPJ" },
-        { name: "license_number", label: "Registro profissional", placeholder: "CREA, CAU, CRM..." },
-        { name: "email", label: "E-mail", type: "email", placeholder: "profissional@fornecedor.com" },
-        { name: "phone", label: "Telefone", placeholder: "(11) 98888-7777" },
-        { name: "active", label: "Profissional ativo", type: "checkbox", checkboxLabel: "Profissional ativo" },
-        { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
-      ],
       units: [
         { name: "name", label: "Nome da unidade", placeholder: "Matriz Sao Paulo" },
         { name: "code", label: "Codigo interno", placeholder: "SP01" },
@@ -952,23 +1099,22 @@ export default function App() {
       contracts: [
         { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
         { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
-        { name: "title", label: "Titulo", placeholder: "Prestacao de servicos tecnicos" },
-        { name: "contract_number", label: "Numero do contrato", placeholder: "CTR-2026-001" },
+        { name: "title", label: "Titulo do orcamento", placeholder: "Prestacao de servicos tecnicos" },
+        { name: "contract_number", label: "Numero do orcamento", placeholder: "ORC-2026-001" },
         { name: "category", label: "Categoria", placeholder: "Fiscal, manutencao, licenca" },
         {
           name: "compliance_type",
           label: "Natureza",
           type: "select",
           options: [
-            { value: "CONTRATO", label: "Contrato geral" },
+            { value: "CONTRATO", label: "Orcamento geral" },
             { value: "AVCB", label: "AVCB" },
             { value: "CLCB", label: "CLCB" }
           ]
         },
-        { name: "certificate_number", label: "Numero do documento", placeholder: "Documento vinculado" },
         { name: "start_date", label: "Inicio", type: "date" },
         { name: "end_date", label: "Vencimento", type: "date" },
-        { name: "value", label: "Valor", type: "number", step: "0.01" },
+        { name: "value", label: "Valor", type: "currency" },
         {
           name: "status",
           label: "Status",
@@ -981,19 +1127,18 @@ export default function App() {
             { value: "inactive", label: "Inativo" }
           ]
         },
-        { name: "renewal_alert_days", label: "Alerta em dias", type: "number", step: "1" },
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
       invoices: [
         { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
         { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
-        { name: "contract_id", label: "Contrato vinculado", type: "select", options: selectOptions.contractOptions },
+        { name: "contract_id", label: "Orcamento vinculado", type: "select", options: selectOptions.contractOptions },
         { name: "invoice_number", label: "Numero da nota", placeholder: "100245" },
         { name: "series", label: "Serie", placeholder: "1" },
         { name: "issue_date", label: "Emissao", type: "date" },
         { name: "due_date", label: "Vencimento", type: "date" },
-        { name: "total_amount", label: "Valor total", type: "number", step: "0.01" },
-        { name: "tax_amount", label: "Impostos", type: "number", step: "0.01" },
+        { name: "total_amount", label: "Valor total", type: "currency" },
+        { name: "tax_amount", label: "Impostos", type: "currency" },
         {
           name: "status",
           label: "Status",
@@ -1011,8 +1156,7 @@ export default function App() {
       documents: [
         { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
         { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
-        { name: "professional_id", label: "Profissional", type: "select", options: selectOptions.professionalOptions },
-        { name: "contract_id", label: "Contrato", type: "select", options: selectOptions.contractOptions },
+        { name: "contract_id", label: "Orcamento", type: "select", options: selectOptions.contractOptions },
         { name: "request_number", label: "Numero do pedido", placeholder: "PED-2026-001" },
         { name: "document_number", label: "Numero do documento", placeholder: "AVCB-00991" },
         { name: "issue_date", label: "Emissao", type: "date" },
@@ -1039,7 +1183,6 @@ export default function App() {
     () => ({
       users: buildFilterFieldsFromForm(fieldsBySection.users, { excludeNames: ["password"] }),
       vendors: buildFilterFieldsFromForm(fieldsBySection.vendors),
-      professionals: buildFilterFieldsFromForm(fieldsBySection.professionals),
       units: buildFilterFieldsFromForm(fieldsBySection.units),
       contracts: buildFilterFieldsFromForm(fieldsBySection.contracts, { includeDueState: true }),
       invoices: buildFilterFieldsFromForm(fieldsBySection.invoices, { includeDueState: true }),
@@ -1057,7 +1200,7 @@ export default function App() {
         },
         { name: "vendor_id", label: "Fornecedor", filterType: "select", options: selectOptions.vendorOptions },
         { name: "unit_id", label: "Unidade", filterType: "select", options: selectOptions.unitOptions },
-        { name: "contract_id", label: "Contrato", filterType: "select", options: selectOptions.contractOptions },
+        { name: "contract_id", label: "Orcamento", filterType: "select", options: selectOptions.contractOptions },
         { name: "invoice_id", label: "Nota fiscal", filterType: "select", options: selectOptions.invoiceOptions },
         { name: "regulatory_document_id", label: "Documento regulatorio", filterType: "select", options: selectOptions.regulatoryOptions },
         { name: "created_at", label: "Data de envio", filterType: "date-range" },
@@ -1078,8 +1221,6 @@ export default function App() {
     const documents = entities.documents;
     const invoices = entities.invoices;
     const contracts = entities.contracts;
-    const professionals = entities.professionals;
-
     const baseMetrics = [
       { label: "Arquivos", value: files.length },
       { label: "Docs em transito", value: documents.filter((doc) => doc.status === "in_progress").length }
@@ -1112,7 +1253,6 @@ export default function App() {
 
     const relatedFiles = files.filter((file) =>
       (section === "vendors" && file.vendor_id === item.id) ||
-      (section === "professionals" && file.vendor_id === item.vendor_id) ||
       (section === "units" && file.unit_id === item.id) ||
       (section === "contracts" && file.contract_id === item.id) ||
       (section === "invoices" && file.invoice_id === item.id) ||
@@ -1122,7 +1262,6 @@ export default function App() {
 
     const relatedDocuments = documents.filter((document) =>
       (section === "vendors" && document.vendor_id === item.id) ||
-      (section === "professionals" && document.professional_id === item.id) ||
       (section === "units" && document.unit_id === item.id) ||
       (section === "contracts" && document.contract_id === item.id) ||
       (section === "documents" && (document.unit_id === item.unit_id || document.vendor_id === item.vendor_id)) ||
@@ -1142,11 +1281,6 @@ export default function App() {
       (section === "documents" && invoice.contract_id === item.contract_id)
     );
 
-    const relatedProfessionals = professionals.filter((professional) =>
-      (section === "vendors" && professional.vendor_id === item.id) ||
-      (section === "documents" && professional.id === item.professional_id)
-    );
-
     const timeline = [
       ...relatedDocuments.map((document) => ({
         label: `${document.document_type} ${document.document_number || document.request_number || "sem numero"}`,
@@ -1161,12 +1295,8 @@ export default function App() {
         detail: `${file.category || "Sem categoria"} - ${formatDateTime(file.created_at)}`
       })),
       ...relatedContracts.map((contract) => ({
-        label: `Contrato ${contract.contract_number || contract.title}`,
+        label: `Orcamento ${contract.contract_number || contract.title}`,
         detail: `${explicitStatusLabels[contract.status] || contract.status} - ${formatDate(contract.end_date)}`
-      })),
-      ...relatedProfessionals.map((professional) => ({
-        label: `Profissional ${professional.name}`,
-        detail: `${professional.role || "Sem funcao"} - ${professional.vendor_name || ""}`
       }))
     ];
 
@@ -1177,7 +1307,7 @@ export default function App() {
         { label: "Arquivos vinculados", value: relatedFiles.length },
         { label: "Documentos relacionados", value: relatedDocuments.length },
         { label: "Processos em transito", value: relatedDocuments.filter((doc) => doc.status === "in_progress").length + relatedInvoices.filter((invoice) => ["pending", "review"].includes(invoice.status)).length },
-        { label: "Contratos relacionados", value: relatedContracts.length || relatedProfessionals.length }
+        { label: "Orcamentos relacionados", value: relatedContracts.length }
       ],
       timeline: limitTimeline(timeline, "Sem historico relacionado")
     };
@@ -1196,7 +1326,7 @@ export default function App() {
   const criticalDeadlines = useMemo(() => {
     const rows = [
       ...entities.contracts.map((contract) => ({
-        modulo: "Contrato",
+        modulo: "Orcamento",
         identificador: contract.contract_number || contract.title,
         titulo: contract.title,
         unidade: contract.unit_name,
@@ -1240,7 +1370,7 @@ export default function App() {
       ...entities.contracts
         .filter((contract) => ["expiring", "signed"].includes(contract.status))
         .map((contract) => ({
-          modulo: "Contrato",
+          modulo: "Orcamento",
           identificador: contract.contract_number || contract.title,
           unidade: contract.unit_name,
           fornecedor: contract.vendor_name,
@@ -1286,17 +1416,16 @@ export default function App() {
           { label: "Em transito", value: inTransitProcesses.length }
         ],
         highlights: [
-          `${dashboard.counts.vendors} fornecedores e ${dashboard.counts.professionals} profissionais cadastrados`,
-          `${dashboard.counts.active_contracts} contratos ativos e ${dashboard.counts.pending_invoices} notas pendentes`,
+          `${dashboard.counts.vendors} fornecedores cadastrados`,
+          `${dashboard.counts.active_contracts} orcamentos ativos e ${dashboard.counts.pending_invoices} notas pendentes`,
           `${dashboard.counts.avcb_attention + dashboard.counts.clcb_attention} documentos regulatorios em alerta`
         ],
         columns: [
           { key: "fornecedores", label: "Fornecedores" },
-          { key: "profissionais", label: "Profissionais" },
           { key: "usuarios_ativos", label: "Usuarios ativos" },
           { key: "arquivos", label: "Arquivos" },
           { key: "unidades", label: "Unidades" },
-          { key: "contratos_ativos", label: "Contratos ativos" },
+          { key: "contratos_ativos", label: "Orcamentos ativos" },
           { key: "notas_pendentes", label: "Notas pendentes" },
           { key: "avcb_alerta", label: "AVCB alerta" },
           { key: "clcb_alerta", label: "CLCB alerta" },
@@ -1305,7 +1434,6 @@ export default function App() {
         rows: [
           {
             fornecedores: dashboard.counts.vendors,
-            profissionais: dashboard.counts.professionals,
             usuarios_ativos: dashboard.counts.active_users,
             arquivos: dashboard.counts.files,
             unidades: dashboard.counts.units,
@@ -1350,17 +1478,16 @@ export default function App() {
       },
       {
         id: "vendors",
-        title: "Fornecedores e profissionais",
-        fileBase: "repofiscal-fornecedores-profissionais",
-        description: "Base combinada de fornecedores de servicos, produtos e seus profissionais vinculados.",
+        title: "Fornecedores",
+        fileBase: "repofiscal-fornecedores",
+        description: "Base de fornecedores de servicos e produtos.",
         metrics: [
           { label: "Fornecedores", value: entities.vendors.length },
-          { label: "Profissionais", value: entities.professionals.length },
           { label: "Servicos", value: entities.vendors.filter((item) => item.kind === "service").length },
           { label: "Produtos", value: entities.vendors.filter((item) => item.kind === "product").length }
         ],
         highlights: [
-          "Relaciona fornecedor, tipo, contato e base profissional",
+          "Relaciona fornecedor, tipo e contato",
           "Apoia homologacao e controle operacional",
           "Base pronta para auditoria fiscal e tecnica"
         ],
@@ -1373,8 +1500,7 @@ export default function App() {
           { key: "contato", label: "Contato" },
           { key: "status", label: "Status" }
         ],
-        rows: [
-          ...entities.vendors.map((item) => ({
+        rows: entities.vendors.map((item) => ({
             tipo_registro: "Fornecedor",
             nome: item.name,
             fornecedor: item.name,
@@ -1382,17 +1508,7 @@ export default function App() {
             documento: item.document,
             contato: item.contact_name || item.email || item.phone,
             status: explicitStatusLabels[item.status] || item.status
-          })),
-          ...entities.professionals.map((item) => ({
-            tipo_registro: "Profissional",
-            nome: item.name,
-            fornecedor: item.vendor_name,
-            tipo: item.role,
-            documento: item.document,
-            contato: item.email || item.phone,
-            status: item.active ? "Ativo" : "Inativo"
           }))
-        ]
       },
       {
         id: "units",
@@ -1407,7 +1523,7 @@ export default function App() {
         ],
         highlights: [
           "Inclui codigo interno, cidade, UF e gestor",
-          "Base para cruzamento com contratos e notas",
+          "Base para cruzamento com orcamentos e notas",
           "Apoia padronizacao cadastral das filiais"
         ],
         columns: [
@@ -1431,23 +1547,23 @@ export default function App() {
       },
       {
         id: "contracts",
-        title: "Contratos",
-        fileBase: "repofiscal-contratos",
-        description: "Contratos gerais e de compliance com valor, vigencia e classificacao.",
+        title: "Orcamentos",
+        fileBase: "repofiscal-orcamentos",
+        description: "Orcamentos gerais e de compliance com valor, vigencia e classificacao.",
         metrics: [
-          { label: "Contratos", value: entities.contracts.length },
+          { label: "Orcamentos", value: entities.contracts.length },
           { label: "Ativos", value: entities.contracts.filter((item) => item.status === "active").length },
           { label: "A vencer", value: entities.contracts.filter((item) => getDueMeta(item.end_date).tone === "warning").length },
           { label: "Vencidos", value: entities.contracts.filter((item) => getDueMeta(item.end_date).tone === "danger").length }
         ],
         highlights: [
           "Monitora vigencia e vencimento por unidade",
-          "Distingue contrato geral, AVCB e CLCB",
+          "Distingue orcamento geral, AVCB e CLCB",
           "Base para renovacao e planejamento"
         ],
         columns: [
           { key: "contract_number", label: "Numero" },
-          { key: "title", label: "Contrato" },
+          { key: "title", label: "Orcamento" },
           { key: "vendor_name", label: "Fornecedor" },
           { key: "unit_name", label: "Unidade" },
           { key: "compliance_type", label: "Tipo" },
@@ -1513,7 +1629,7 @@ export default function App() {
         id: "avcb",
         title: "AVCB",
         fileBase: "repofiscal-avcb",
-        description: "Pedidos e documentos AVCB com unidade, profissional responsavel e vencimento.",
+        description: "Pedidos e documentos AVCB com unidade, fornecedor e vencimento.",
         metrics: [
           { label: "Registros", value: avcbRows.length },
           { label: "Em dia", value: avcbRows.filter((item) => getDueMeta(item.expiry_date).tone === "success").length },
@@ -1522,7 +1638,7 @@ export default function App() {
         ],
         highlights: [
           "Relatorio regulatorio especifico de AVCB",
-          "Cruza unidade, fornecedor e profissional",
+          "Cruza unidade, fornecedor e anexos",
           "Pronto para acompanhamento de renovacao"
         ],
         columns: [
@@ -1530,7 +1646,6 @@ export default function App() {
           { key: "document_number", label: "Documento" },
           { key: "unit_name", label: "Unidade" },
           { key: "vendor_name", label: "Fornecedor" },
-          { key: "professional_name", label: "Profissional" },
           { key: "expiry_date_label", label: "Vencimento" },
           { key: "alerta", label: "Alerta" },
           { key: "status", label: "Status" }
@@ -1540,7 +1655,6 @@ export default function App() {
           document_number: item.document_number,
           unit_name: item.unit_name,
           vendor_name: item.vendor_name,
-          professional_name: item.professional_name,
           expiry_date_label: formatDate(item.expiry_date),
           alerta: getDueMeta(item.expiry_date).label,
           status: explicitStatusLabels[item.status] || item.status
@@ -1567,7 +1681,6 @@ export default function App() {
           { key: "document_number", label: "Documento" },
           { key: "unit_name", label: "Unidade" },
           { key: "vendor_name", label: "Fornecedor" },
-          { key: "professional_name", label: "Profissional" },
           { key: "expiry_date_label", label: "Vencimento" },
           { key: "alerta", label: "Alerta" },
           { key: "status", label: "Status" }
@@ -1577,7 +1690,6 @@ export default function App() {
           document_number: item.document_number,
           unit_name: item.unit_name,
           vendor_name: item.vendor_name,
-          professional_name: item.professional_name,
           expiry_date_label: formatDate(item.expiry_date),
           alerta: getDueMeta(item.expiry_date).label,
           status: explicitStatusLabels[item.status] || item.status
@@ -1620,7 +1732,7 @@ export default function App() {
         id: "critical-deadlines",
         title: "Vencimentos criticos",
         fileBase: "repofiscal-vencimentos-criticos",
-        description: "Consolidado de contratos, notas e documentos em atraso ou a vencer nos proximos 60 dias.",
+        description: "Consolidado de orcamentos, notas e documentos em atraso ou a vencer nos proximos 60 dias.",
         metrics: [
           { label: "Itens", value: criticalDeadlines.length },
           { label: "Atrasados", value: criticalDeadlines.filter((item) => item.prioridade === 0).length },
@@ -1629,7 +1741,7 @@ export default function App() {
         ],
         highlights: [
           "Relatorio mais sensivel para governanca de prazos",
-          "Unifica fiscal, contratos e regulatorio",
+          "Unifica fiscal, orcamentos e regulatorio",
           "Ideal para rotina de cobranca e renovacao"
         ],
         columns: [
@@ -1655,7 +1767,7 @@ export default function App() {
         metrics: [
           { label: "Itens", value: inTransitProcesses.length },
           { label: "Notas", value: inTransitProcesses.filter((item) => item.modulo === "Nota fiscal").length },
-          { label: "Contratos", value: inTransitProcesses.filter((item) => item.modulo === "Contrato").length },
+          { label: "Orcamentos", value: inTransitProcesses.filter((item) => item.modulo === "Orcamento").length },
           { label: "Regulatorios", value: inTransitProcesses.filter((item) => item.modulo === "AVCB" || item.modulo === "CLCB").length }
         ],
         highlights: [
@@ -1779,7 +1891,7 @@ export default function App() {
     } else if (activeTab === "files") {
       list = entities.files;
     } else if (activeTab === "vendors") {
-      list = vendorView === "vendors" ? entities.vendors : entities.professionals;
+      list = entities.vendors;
     } else if (activeTab === "avcb" || activeTab === "clcb") {
       list = entities.documents.filter((document) => document.document_type === activeTab.toUpperCase());
     } else {
@@ -1834,7 +1946,7 @@ export default function App() {
       }
       return leftMeta.sortValue - rightMeta.sortValue;
     });
-  }, [activeTab, activeDataKey, currentFilterFields, currentListFilters, deferredSearch, entities, vendorView]);
+  }, [activeTab, activeDataKey, currentFilterFields, currentListFilters, deferredSearch, entities]);
 
   function updateListFilter(section, name, value) {
     setListFilters((current) => ({
@@ -1866,7 +1978,7 @@ export default function App() {
   }
 
   function openDashboardList(section, options = {}) {
-    const targetDataKey = options.vendorView || section;
+    const targetDataKey = section;
     setBanner("");
     setError("");
     setSearch((current) => ({ ...current, [targetDataKey]: "" }));
@@ -1878,11 +1990,6 @@ export default function App() {
       ...current,
       [targetDataKey]: Boolean(options.filters && Object.keys(options.filters).length)
     }));
-    if (options.vendorView) {
-      setVendorView(options.vendorView);
-      startTransition(() => setActiveTab("vendors"));
-      return;
-    }
     startTransition(() => setActiveTab(section));
   }
 
@@ -1906,7 +2013,8 @@ export default function App() {
     setBanner("");
     setError("");
     const documentType = options.documentType || item?.document_type || null;
-    setModal({ section, item, documentType });
+    const mode = options.mode || (item ? "edit" : "create");
+    setModal({ section, item, documentType, mode });
     const nextForm = item ? { ...initialForms[section], ...item } : { ...initialForms[section] };
     if (section === "documents" && documentType) {
       nextForm.document_type = documentType;
@@ -1915,7 +2023,7 @@ export default function App() {
   }
 
   function closeModal() {
-    setModal({ section: null, item: null, documentType: null });
+    setModal({ section: null, item: null, documentType: null, mode: "edit" });
     setFormData({});
     setDocumentAttachments(defaultDocumentAttachments);
   }
@@ -1935,14 +2043,18 @@ export default function App() {
     }));
   }
 
-  async function loadDocumentAttachments(documentId) {
+  async function loadModalAttachments(section, itemId) {
     setDocumentAttachments((current) => ({ ...current, loading: true }));
     try {
-      const payload = await api.get(`/api/regulatory-documents/${documentId}/history`);
+      const path = section === "contracts"
+        ? `/api/contracts/${itemId}/history`
+        : `/api/regulatory-documents/${itemId}/history`;
+      const payload = await api.get(path);
       setDocumentAttachments((current) => ({
         ...current,
         loading: false,
         files: payload.files || [],
+        invoices: payload.invoices || [],
         history: payload.history || []
       }));
     } catch (historyError) {
@@ -1950,6 +2062,7 @@ export default function App() {
         ...current,
         loading: false,
         files: [],
+        invoices: [],
         history: []
       }));
       setError(historyError.message);
@@ -1965,28 +2078,24 @@ export default function App() {
     if (section === "units") {
       payload.active = Boolean(payload.active);
     }
-    if (section === "professionals") {
-      payload.vendor_id = Number(payload.vendor_id);
-      payload.active = Boolean(payload.active);
-    }
     if (section === "contracts") {
       payload.vendor_id = Number(payload.vendor_id);
       payload.unit_id = Number(payload.unit_id);
-      payload.value = Number(payload.value || 0);
-      payload.renewal_alert_days = Number(payload.renewal_alert_days || 0);
+      payload.value = parseCurrencyValue(payload.value);
+      payload.renewal_alert_days = Number(payload.renewal_alert_days || 30);
     }
     if (section === "invoices") {
       payload.vendor_id = Number(payload.vendor_id);
       payload.unit_id = Number(payload.unit_id);
       payload.contract_id = payload.contract_id ? Number(payload.contract_id) : null;
-      payload.total_amount = Number(payload.total_amount || 0);
-      payload.tax_amount = Number(payload.tax_amount || 0);
+      payload.total_amount = parseCurrencyValue(payload.total_amount);
+      payload.tax_amount = parseCurrencyValue(payload.tax_amount);
     }
     if (section === "documents") {
       payload.document_type = documentType || payload.document_type || "AVCB";
       payload.unit_id = Number(payload.unit_id);
       payload.vendor_id = payload.vendor_id ? Number(payload.vendor_id) : null;
-      payload.professional_id = payload.professional_id ? Number(payload.professional_id) : null;
+      payload.professional_id = null;
       payload.contract_id = payload.contract_id ? Number(payload.contract_id) : null;
     }
 
@@ -2020,7 +2129,7 @@ export default function App() {
 
   async function saveCurrentItem(event) {
     event.preventDefault();
-    if (!modal.section) {
+    if (!modal.section || modal.mode === "view") {
       return;
     }
 
@@ -2044,8 +2153,32 @@ export default function App() {
     }
   }
 
+  function getDeleteLabel(item) {
+    return item.name || item.title || item.invoice_number || item.document_number || item.request_number || item.original_name || "registro";
+  }
+
+  async function performDelete(section, item, elevation = null) {
+    await api.delete(`${entityPath[section]}/${item.id}`, elevation);
+    setBanner("Registro removido com sucesso.");
+    await loadAllData();
+  }
+
   async function removeItem(section, item) {
-    const label = item.name || item.title || item.invoice_number || item.document_number || item.request_number || item.original_name || "registro";
+    const label = getDeleteLabel(item);
+    if (user.role === "operator") {
+      setDeleteElevation({
+        open: true,
+        section,
+        item,
+        email: "",
+        password: "",
+        loading: false
+      });
+      setBanner("");
+      setError("");
+      return;
+    }
+
     if (!window.confirm(`Excluir "${label}"?`)) {
       return;
     }
@@ -2053,10 +2186,47 @@ export default function App() {
     setBanner("");
     setError("");
     try {
-      await api.delete(`${entityPath[section]}/${item.id}`);
-      setBanner("Registro removido com sucesso.");
-      await loadAllData();
+      await performDelete(section, item);
     } catch (deleteError) {
+      setError(deleteError.message);
+    }
+  }
+
+  function closeDeleteElevation() {
+    if (deleteElevation.loading) {
+      return;
+    }
+    setDeleteElevation({
+      open: false,
+      section: null,
+      item: null,
+      email: "",
+      password: "",
+      loading: false
+    });
+  }
+
+  async function submitDeleteElevation(event) {
+    event.preventDefault();
+    if (!deleteElevation.section || !deleteElevation.item) {
+      return;
+    }
+
+    if (!window.confirm(`Excluir "${getDeleteLabel(deleteElevation.item)}" com elevacao administrativa?`)) {
+      return;
+    }
+
+    setDeleteElevation((current) => ({ ...current, loading: true }));
+    setBanner("");
+    setError("");
+    try {
+      await performDelete(deleteElevation.section, deleteElevation.item, {
+        email: deleteElevation.email,
+        password: deleteElevation.password
+      });
+      closeDeleteElevation();
+    } catch (deleteError) {
+      setDeleteElevation((current) => ({ ...current, loading: false }));
       setError(deleteError.message);
     }
   }
@@ -2086,6 +2256,7 @@ export default function App() {
       await api.postForm("/api/files/upload", form);
       setUploadForm({
         file: null,
+        import_format: "auto",
         category: "",
         notes: "",
         vendor_id: "",
@@ -2109,12 +2280,12 @@ export default function App() {
 
   async function handleDocumentAttachmentUpload() {
     if (!modal.item?.id) {
-      setError("Salve o documento antes de anexar arquivos.");
+      setError("Salve o registro antes de anexar arquivos.");
       return;
     }
 
     if (!documentAttachments.form.file) {
-      setError("Selecione um arquivo para anexar a solicitacao.");
+      setError("Selecione um arquivo para anexar ao processo.");
       return;
     }
 
@@ -2130,24 +2301,42 @@ export default function App() {
       form.append("vendor_id", String(formData.vendor_id || modal.item.vendor_id || ""));
       form.append("unit_id", String(formData.unit_id || modal.item.unit_id || ""));
       form.append("contract_id", String(formData.contract_id || modal.item.contract_id || ""));
-      form.append("regulatory_document_id", String(modal.item.id));
+      if (modal.section === "contracts") {
+        form.set("contract_id", String(modal.item.id));
+      } else if (modal.section === "documents") {
+        form.append("regulatory_document_id", String(modal.item.id));
+      } else if (modal.section === "vendors") {
+        form.set("vendor_id", String(modal.item.id));
+      } else if (modal.section === "units") {
+        form.set("unit_id", String(modal.item.id));
+      } else if (modal.section === "invoices") {
+        form.append("invoice_id", String(modal.item.id));
+        form.set("vendor_id", String(modal.item.vendor_id || formData.vendor_id || ""));
+        form.set("unit_id", String(modal.item.unit_id || formData.unit_id || ""));
+        form.set("contract_id", String(modal.item.contract_id || formData.contract_id || ""));
+      }
 
       await api.postForm("/api/files/upload", form);
       setDocumentAttachments((current) => ({
         ...current,
         uploading: false,
-        form: {
-          file: null,
-          category: "",
-          notes: ""
+          form: {
+            file: null,
+            import_format: "auto",
+            category: "",
+            notes: ""
         }
       }));
       const fileInput = document.getElementById("document-attachment-input");
       if (fileInput) {
         fileInput.value = "";
       }
-      setBanner("Anexo enviado com sucesso para a solicitacao.");
-      await Promise.all([loadAllData(), loadDocumentAttachments(modal.item.id)]);
+      setBanner("Anexo enviado com sucesso.");
+      if (modal.section === "documents" || modal.section === "contracts") {
+        await Promise.all([loadAllData(), loadModalAttachments(modal.section, modal.item.id)]);
+      } else {
+        await loadAllData();
+      }
     } catch (uploadError) {
       setDocumentAttachments((current) => ({ ...current, uploading: false }));
       setError(uploadError.message);
@@ -2159,7 +2348,10 @@ export default function App() {
       const { blob, fileName } = await api.download(`/api/files/${file.id}/download`);
       downloadBlobFile(blob, fileName);
       if (modal.section === "documents" && modal.item?.id && file.regulatory_document_id === modal.item.id) {
-        await loadDocumentAttachments(modal.item.id);
+        await loadModalAttachments("documents", modal.item.id);
+      }
+      if (modal.section === "contracts" && modal.item?.id && file.contract_id === modal.item.id) {
+        await loadModalAttachments("contracts", modal.item.id);
       }
     } catch (downloadError) {
       setError(downloadError.message);
@@ -2233,16 +2425,90 @@ export default function App() {
     setError("");
 
     try {
-      const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
-      const suffix = reportFilterSummary.length ? "-filtrado" : "";
-      if (format === "csv") {
-        exportReportAsCsv(`${report.fileBase}${suffix}-${timestamp}.csv`, report, reportFilterSummary);
-      } else {
-        exportReportAsJson(`${report.fileBase}${suffix}-${timestamp}.json`, report, reportFilterSummary);
-      }
+      exportRowsByFormat({
+        fileBase: report.fileBase,
+        title: report.title,
+        rows: report.rows,
+        columns: report.columns,
+        format,
+        filterSummary: reportFilterSummary
+      });
       setBanner(`Relatorio "${report.title}" extraido com sucesso em ${format.toUpperCase()}.`);
     } catch (reportError) {
       setError(reportError.message || "Nao foi possivel extrair o relatorio.");
+    }
+  }
+
+  function handleExportCurrentRows() {
+    if (!currentRows.length) {
+      setError("Nao ha registros para extrair nesta tabela.");
+      return;
+    }
+
+    setBanner("");
+    setError("");
+
+    try {
+      exportRowsByFormat({
+        fileBase: `repofiscal-${activeDataKey}`,
+        title: sectionTitle,
+        rows: currentRows,
+        columns: columnsByView[activeDataKey] || [],
+        format: tableExportFormat,
+        filterSummary: activeListFilterCount ? ["Filtros aplicados na tabela"] : []
+      });
+      setBanner(`Tabela "${sectionTitle}" extraida com sucesso em ${tableExportFormat.toUpperCase()}.`);
+    } catch (exportError) {
+      setError(exportError.message || "Nao foi possivel extrair a tabela.");
+    }
+  }
+
+  function getModalExportPayload() {
+    if (!modal.section) {
+      return { columns: [], rows: [] };
+    }
+
+    const fields = fieldsBySection[modal.section] || [];
+    const columns = fields.map((field) => ({ key: field.name, label: field.label }));
+    const row = {};
+
+    fields.forEach((field) => {
+      const value = formData[field.name];
+      if (field.type === "select") {
+        row[field.name] = field.options?.find((option) => String(option.value) === String(value))?.label || value || "";
+        return;
+      }
+      if (field.type === "checkbox") {
+        row[field.name] = value ? "Sim" : "Nao";
+        return;
+      }
+      row[field.name] = value ?? "";
+    });
+
+    return { columns, rows: [row] };
+  }
+
+  function handleExportModalRecord(format) {
+    if (!modal.section) {
+      return;
+    }
+
+    setBanner("");
+    setError("");
+
+    try {
+      const payload = getModalExportPayload();
+      exportRowsByFormat({
+        fileBase: `repofiscal-${modal.section}-${modal.item?.id || "novo"}`,
+        title: `${modalTitleMap[modal.section] || "Registro"} ${modal.item?.id || ""}`.trim(),
+        rows: payload.rows,
+        columns: payload.columns,
+        format,
+        filterSummary: []
+      });
+      setBanner(`Registro extraido com sucesso em ${format.toUpperCase()}.`);
+    } catch (exportError) {
+      setError(exportError.message || "Nao foi possivel extrair o registro.");
     }
   }
 
@@ -2254,7 +2520,7 @@ export default function App() {
       return null;
     }
     if (activeTab === "vendors") {
-      return vendorView === "vendors" ? () => openModal("vendors") : () => openModal("professionals");
+      return () => openModal("vendors");
     }
     if (activeTab === "avcb" || activeTab === "clcb") {
       return () => openModal("documents", null, { documentType: activeTab.toUpperCase() });
@@ -2268,7 +2534,7 @@ export default function App() {
       return;
     }
     if (activeTab === "vendors") {
-      openModal(vendorView, item);
+      openModal("vendors", item);
       return;
     }
     if (activeTab === "avcb" || activeTab === "clcb") {
@@ -2276,6 +2542,25 @@ export default function App() {
       return;
     }
     openModal(activeTab, item);
+  }
+
+  function currentViewAction(item) {
+    if (activeTab === "files" || activeTab === "reports" || activeTab === "operations") {
+      return;
+    }
+    if (activeTab === "users") {
+      openModal("users", item, { mode: "view" });
+      return;
+    }
+    if (activeTab === "vendors") {
+      openModal("vendors", item, { mode: "view" });
+      return;
+    }
+    if (activeTab === "avcb" || activeTab === "clcb") {
+      openModal("documents", item, { documentType: item.document_type, mode: "view" });
+      return;
+    }
+    openModal(activeTab, item, { mode: "view" });
   }
 
   function currentDeleteAction(item) {
@@ -2288,7 +2573,7 @@ export default function App() {
       return;
     }
     if (activeTab === "vendors") {
-      removeItem(vendorView, item);
+      removeItem("vendors", item);
       return;
     }
     if (activeTab === "avcb" || activeTab === "clcb") {
@@ -2349,16 +2634,7 @@ export default function App() {
       { key: "kind", label: "Tipo", render: (value) => typeLabels[value] || value },
       { key: "document", label: "Documento" },
       { key: "contact_name", label: "Contato" },
-      { key: "professionals_count", label: "Profissionais" },
       { key: "status", label: "Status", render: (value) => statusBadge(value) }
-    ],
-    professionals: [
-      { key: "name", label: "Profissional" },
-      { key: "vendor_name", label: "Fornecedor" },
-      { key: "role", label: "Funcao" },
-      { key: "license_number", label: "Registro" },
-      { key: "phone", label: "Telefone" },
-      { key: "active", label: "Status", render: (value) => statusBadge(value ? "active" : "inactive") }
     ],
     units: [
       { key: "code", label: "Codigo" },
@@ -2368,7 +2644,7 @@ export default function App() {
       { key: "active", label: "Situacao", render: (value) => statusBadge(value ? "active" : "inactive") }
     ],
     contracts: [
-      { key: "title", label: "Contrato" },
+      { key: "title", label: "Orcamento" },
       { key: "compliance_type", label: "Tipo" },
       { key: "vendor_name", label: "Fornecedor" },
       { key: "unit_name", label: "Unidade" },
@@ -2389,7 +2665,6 @@ export default function App() {
       { key: "document_number", label: "Documento" },
       { key: "unit_name", label: "Unidade" },
       { key: "vendor_name", label: "Fornecedor" },
-      { key: "professional_name", label: "Profissional" },
       { key: "expiry_date", label: "Vencimento", render: (value) => dueCell(value) },
       { key: "status", label: "Status", render: (value) => statusBadge(value) }
     ],
@@ -2398,7 +2673,6 @@ export default function App() {
       { key: "document_number", label: "Documento" },
       { key: "unit_name", label: "Unidade" },
       { key: "vendor_name", label: "Fornecedor" },
-      { key: "professional_name", label: "Profissional" },
       { key: "expiry_date", label: "Vencimento", render: (value) => dueCell(value) },
       { key: "status", label: "Status", render: (value) => statusBadge(value) }
     ]
@@ -2415,23 +2689,41 @@ export default function App() {
   const modalTitleMap = {
     users: "Usuario",
     vendors: "Fornecedor",
-    professionals: "Profissional",
     units: "Unidade",
-    contracts: "Contrato",
+    contracts: "Orcamento",
     invoices: "Nota fiscal",
     documents: modal.documentType || "Documento"
   };
+  const modalReadOnly = modal.mode === "view";
+  const modalActionTools = modal.section
+    ? {
+        enabled: modalReadOnly,
+        format: modalExportFormat,
+        formatOptions: exportFormatOptions,
+        onFormatChange: setModalExportFormat,
+        onExtract: handleExportModalRecord
+      }
+    : null;
 
+  const attachmentEnabledSections = ["vendors", "units", "contracts", "invoices", "documents"];
   const modalAttachments =
-    modal.section === "documents"
+    attachmentEnabledSections.includes(modal.section)
       ? {
           enabled: true,
+          section: modal.section,
           documentId: modal.item?.id || null,
-          files: documentAttachments.files,
+          files: modal.section === "documents" || modal.section === "contracts" ? documentAttachments.files : modalRelatedFiles,
+          invoices: documentAttachments.invoices,
           history: documentAttachments.history,
           form: documentAttachments.form,
           uploading: documentAttachments.uploading,
           loading: documentAttachments.loading,
+          title: modal.section === "contracts" ? "Repositorio do orcamento" : modal.section === "documents" ? "Solicitacao documental" : "Repositorio de anexos",
+          saveMessage: modal.section === "contracts" ? "Salve o orcamento primeiro para liberar anexos, notas e historico." : "Salve o registro primeiro para liberar anexos.",
+          uploadLabel: modal.section === "contracts" ? "Importar nota/documento" : "Importar documento",
+          emptyFilesLabel: modal.section === "contracts" ? "Nenhum anexo vinculado a este orcamento." : "Nenhum anexo vinculado a este registro.",
+          importFormatOptions,
+          getImportAccept,
           onChange: updateDocumentAttachmentField,
           onUpload: handleDocumentAttachmentUpload,
           onDownload: handleDownloadFile,
@@ -2445,9 +2737,8 @@ export default function App() {
     users: "Buscar usuarios...",
     files: "Buscar arquivos...",
     vendors: "Buscar fornecedores...",
-    professionals: "Buscar profissionais...",
     units: "Buscar unidades...",
-    contracts: "Buscar contratos...",
+    contracts: "Buscar orcamentos...",
     invoices: "Buscar notas fiscais...",
     avcb: "Buscar pedidos ou documentos AVCB...",
     clcb: "Buscar pedidos ou documentos CLCB..."
@@ -2460,10 +2751,19 @@ export default function App() {
     Boolean(listFilterPanels[activeDataKey]);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? "app-shell--sidebar-collapsed" : ""}`}>
       <aside className="sidebar">
         <div className="brand-block">
           <img className="brand-block__logo" src={repofiscalLogo} alt="REPOFISCAL" />
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={sidebarCollapsed ? "Abrir menu" : "Recolher menu"}
+            title={sidebarCollapsed ? "Abrir menu" : "Recolher menu"}
+          >
+            {sidebarCollapsed ? ">" : "<"}
+          </button>
         </div>
 
         <nav className="nav-tabs" aria-label="Navegacao principal">
@@ -2473,6 +2773,7 @@ export default function App() {
               type="button"
               className={`nav-tab ${activeTab === tab.id ? "nav-tab--active" : ""}`}
               onClick={() => startTransition(() => setActiveTab(tab.id))}
+              title={tab.label}
             >
               {tab.label}
             </button>
@@ -2569,6 +2870,20 @@ export default function App() {
               <button type="button" className="secondary-button topbar-filter-clear" onClick={clearCurrentFilters}>
                 Limpar filtros
               </button>
+              <div className="topbar-export-group">
+                <select
+                  aria-label="Tipo de extracao da tabela"
+                  value={tableExportFormat}
+                  onChange={(event) => setTableExportFormat(event.target.value)}
+                >
+                  {exportFormatOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button type="button" className="secondary-button" onClick={handleExportCurrentRows}>
+                  Extrair
+                </button>
+              </div>
               {currentCreateAction() ? (
                 <button type="button" className="primary-button topbar-create-button" onClick={currentCreateAction()}>
                   Novo registro
@@ -2594,10 +2909,9 @@ export default function App() {
           <>
             <section className="card-grid card-grid--six">
               <StatCard title="Fornecedores" value={dashboard.counts.vendors} tone="info" detail="Servico e produto" onClick={() => openDashboardList("vendors", { vendorView: "vendors" })} />
-              <StatCard title="Profissionais" value={dashboard.counts.professionals} tone="info" detail="Equipe cadastrada" onClick={() => openDashboardList("vendors", { vendorView: "professionals" })} />
               <StatCard title="Usuarios ativos" value={dashboard.counts.active_users} tone="info" detail="Acessos liberados" onClick={() => openDashboardList("users", { filters: { active: "true" } })} />
               <StatCard title="Arquivos" value={dashboard.counts.files} tone="info" detail="PDF, CSV, XML e Excel" onClick={() => openDashboardList("files")} />
-              <StatCard title="Contratos ativos" value={dashboard.counts.active_contracts} tone="warning" detail="Com monitoramento" onClick={() => openDashboardList("contracts", { filters: { status: "active" } })} />
+              <StatCard title="Orcamentos ativos" value={dashboard.counts.active_contracts} tone="warning" detail="Com monitoramento" onClick={() => openDashboardList("contracts", { filters: { status: "active" } })} />
               <StatCard title="Notas pendentes" value={dashboard.counts.pending_invoices} tone="danger" detail="Pendente ou analise" onClick={() => openDashboardList("invoices", { filters: { status: "pending" } })} />
             </section>
 
@@ -2611,19 +2925,19 @@ export default function App() {
               <section className="panel">
                 <div className="panel__header">
                   <div>
-                    <span className="eyebrow">Contratos</span>
+                    <span className="eyebrow">Orcamentos</span>
                     <h3>Proximos vencimentos</h3>
                   </div>
                 </div>
                 <DataTable
                   columns={[
-                    { key: "title", label: "Contrato" },
+                    { key: "title", label: "Orcamento" },
                     { key: "vendor_name", label: "Fornecedor" },
                     { key: "unit_name", label: "Unidade" },
                     { key: "end_date", label: "Vencimento", render: (value) => dueCell(value) }
                   ]}
                   rows={dashboard.upcoming_contracts}
-                  emptyMessage="Nenhum contrato com vencimento registrado."
+                  emptyMessage="Nenhum orcamento com vencimento registrado."
                   getRowClassName={(row) => dueRowClass(row.end_date)}
                 />
               </section>
@@ -2802,7 +3116,7 @@ export default function App() {
                   <span className="eyebrow">Extracao</span>
                   <h3>Central de relatorios</h3>
                 </div>
-                <span className="panel__meta">CSV e JSON por modulo e consolidado</span>
+                <span className="panel__meta">CSV, XML, TXT, Excel e PDF/impressao</span>
               </div>
 
               <div className="report-filter-grid">
@@ -2902,11 +3216,20 @@ export default function App() {
                     </ul>
 
                     <div className="report-card__actions">
-                      <button type="button" className="primary-button" onClick={() => handleExportReport(report, "csv")}>
-                        Extrair CSV
-                      </button>
-                      <button type="button" className="secondary-button" onClick={() => handleExportReport(report, "json")}>
-                        Extrair JSON
+                      <label className="field report-format-field" htmlFor={`report-format-${report.id}`}>
+                        <span>Tipo</span>
+                        <select
+                          id={`report-format-${report.id}`}
+                          value={reportExportFormats[report.id] || "csv"}
+                          onChange={(event) => setReportExportFormats((current) => ({ ...current, [report.id]: event.target.value }))}
+                        >
+                          {exportFormatOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <button type="button" className="primary-button" onClick={() => handleExportReport(report, reportExportFormats[report.id] || "csv")}>
+                        Extrair
                       </button>
                     </div>
                   </article>
@@ -2931,9 +3254,17 @@ export default function App() {
                   <input
                     id="file-upload-input"
                     type="file"
-                    accept=".pdf,.csv,.xml,.xlsx,.xls"
+                    accept={getImportAccept(uploadForm.import_format)}
                     onChange={(event) => updateUploadField("file", event.target.files?.[0] || null)}
                   />
+                </label>
+                <label className="field" htmlFor="upload-import-format">
+                  <span>Tipo de importacao</span>
+                  <select id="upload-import-format" value={uploadForm.import_format} onChange={(event) => updateUploadField("import_format", event.target.value)}>
+                    {importFormatOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
                 </label>
                 <label className="field" htmlFor="upload-category">
                   <span>Categoria</span>
@@ -2958,7 +3289,7 @@ export default function App() {
                   </select>
                 </label>
                 <label className="field" htmlFor="upload-contract">
-                  <span>Contrato</span>
+                  <span>Orcamento</span>
                   <select id="upload-contract" value={uploadForm.contract_id} onChange={(event) => updateUploadField("contract_id", event.target.value)}>
                     <option value="">Selecione</option>
                     {selectOptions.contractOptions.map((option) => (
@@ -3021,16 +3352,6 @@ export default function App() {
               </div>
 
               <div className="panel-header-actions">
-                {activeTab === "vendors" ? (
-                  <div className="segment-control" role="tablist" aria-label="Visoes de fornecedores">
-                    <button type="button" className={`segment-control__button ${vendorView === "vendors" ? "segment-control__button--active" : ""}`} onClick={() => setVendorView("vendors")}>
-                      Fornecedores
-                    </button>
-                    <button type="button" className={`segment-control__button ${vendorView === "professionals" ? "segment-control__button--active" : ""}`} onClick={() => setVendorView("professionals")}>
-                      Profissionais
-                    </button>
-                  </div>
-                ) : null}
                 <span className="panel__meta">{loadingData ? "Atualizando..." : `${currentRows.length} registro(s) visivel(is)`}</span>
               </div>
             </div>
@@ -3039,6 +3360,7 @@ export default function App() {
               columns={columnsByView[activeDataKey]}
               rows={currentRows}
               emptyMessage="Nenhum registro encontrado."
+              onView={currentViewAction}
               onEdit={activeDataKey === "users" && user.role !== "superadm" ? null : currentEditAction}
               onDelete={activeDataKey === "users" && user.role !== "superadm" ? null : currentDeleteAction}
               getRowClassName={getRowClassName}
@@ -3048,7 +3370,7 @@ export default function App() {
 
         <FormModal
           open={Boolean(modal.section)}
-          title={`${modal.item ? "Editar" : "Novo"} ${modalTitleMap[modal.section] || ""}`}
+          title={`${modalReadOnly ? "Visualizar" : modal.item ? "Editar" : "Novo"} ${modalTitleMap[modal.section] || ""}`}
           fields={modal.section ? fieldsBySection[modal.section] : []}
           formData={formData}
           onChange={updateFormField}
@@ -3057,7 +3379,57 @@ export default function App() {
           submitLabel={modal.item ? "Salvar alteracoes" : "Criar registro"}
           report={modalReport}
           attachments={modalAttachments}
+          readOnly={modalReadOnly}
+          actions={modalActionTools}
         />
+
+        {deleteElevation.open ? (
+          <div className="modal-backdrop" role="presentation" onClick={closeDeleteElevation}>
+            <div className="elevation-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+              <div className="modal-card__header">
+                <div>
+                  <h3>Elevacao para excluir</h3>
+                  <p>Operador precisa de autorizacao de um administrador ou superadministrador.</p>
+                </div>
+                <button type="button" className="icon-button" onClick={closeDeleteElevation} disabled={deleteElevation.loading}>
+                  Fechar
+                </button>
+              </div>
+              <form className="elevation-form" onSubmit={submitDeleteElevation}>
+                <div className="banner banner--warning">
+                  Excluir: {deleteElevation.item ? getDeleteLabel(deleteElevation.item) : "registro"}
+                </div>
+                <label className="field" htmlFor="delete-elevation-email">
+                  <span>E-mail do admin/superadmin</span>
+                  <input
+                    id="delete-elevation-email"
+                    type="email"
+                    value={deleteElevation.email}
+                    onChange={(event) => setDeleteElevation((current) => ({ ...current, email: event.target.value }))}
+                    autoFocus
+                  />
+                </label>
+                <label className="field" htmlFor="delete-elevation-password">
+                  <span>Senha</span>
+                  <input
+                    id="delete-elevation-password"
+                    type="password"
+                    value={deleteElevation.password}
+                    onChange={(event) => setDeleteElevation((current) => ({ ...current, password: event.target.value }))}
+                  />
+                </label>
+                <div className="modal-actions">
+                  <button type="button" className="secondary-button" onClick={closeDeleteElevation} disabled={deleteElevation.loading}>
+                    Cancelar
+                  </button>
+                  <button type="submit" className="primary-button primary-button--danger" disabled={deleteElevation.loading}>
+                    {deleteElevation.loading ? "Validando..." : "Entrar e excluir"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        ) : null}
       </main>
     </div>
   );

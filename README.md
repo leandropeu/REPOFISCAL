@@ -1,6 +1,6 @@
 # RepoFiscal
 
-Sistema web para o departamento fiscal com gestao de fornecedores, profissionais, unidades, contratos, AVCB, CLCB e notas fiscais.
+Sistema web para o departamento fiscal com gestao de fornecedores, unidades, orcamentos, AVCB, CLCB e notas fiscais.
 
 ## Stack
 
@@ -59,19 +59,20 @@ npm.cmd run dev
 - Login e autenticacao persistidos no banco
 - Aba de usuarios com perfis `operator`, `adm` e `superadm`
 - Cadastro de fornecedores de servicos e produtos
-- Cadastro de profissionais vinculado aos fornecedores
 - Cadastro de unidades
-- Gestao de contratos com vencimento monitorado
+- Gestao de orcamentos com vencimento monitorado
 - Modulos laterais de AVCB e CLCB com pedidos, documentos e datas de validade
-- Gestao de notas fiscais com contratos vinculados
-- Aba de arquivos com upload e download de PDF, CSV, XML e Excel
-- Vinculo de arquivos com fornecedor, unidade, contrato, nota fiscal e documento regulatorio
+- Gestao de notas fiscais com orcamentos vinculados
+- Aba de arquivos com upload e download de PDF, CSV, XML, TXT e Excel
+- Vinculo de arquivos com fornecedor, unidade, orcamento, nota fiscal e documento regulatorio
 - Dashboard com indicadores e listas prioritarias
-- Aba de relatorios com extracao em CSV e JSON
+- Aba de relatorios com extracao em PDF, XML, CSV, TXT e Excel
 - Filtros avancados em relatorios por periodo, unidade, fornecedor, status e tipo de relatorio
 - Aba operacional para visualizar logs e estado dos backups
 - Trilho de auditoria no banco para login, logout, cadastros, edicoes, exclusoes, uploads e backup manual
 - Relatorio rapido em todos os modais com historico relacionado e processos em transito
+- Menu lateral recolhivel e modais com modo de visualizacao antes da edicao
+- Exclusao por operador apenas com elevacao de usuario adm ou superadm
 - Rotina de logs com arquivo rotativo em `LOGS/repofiscal.log`
 - Rotina de backup horario em `BKP/repofiscal-hourly-backups.zip`
 - Retencao automatica dos ultimos 10 dias dentro de um unico arquivo zip

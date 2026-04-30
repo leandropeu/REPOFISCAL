@@ -13,10 +13,11 @@ from app.core.audit import list_audit_logs, list_entity_audit_logs, record_audit
 from app.core.backup import get_backup_status, run_backup_if_due
 from app.core.config import ALLOWED_UPLOAD_EXTENSIONS, LOG_DIR, UPLOAD_DIR
 from app.core.db import execute, fetch_all, fetch_one
-from app.core.security import hash_password, utc_now_iso
+from app.core.security import hash_password, utc_now_iso, verify_password
 from app.dependencies import get_current_user, require_admin, require_superadmin
 from app.schemas import (
     ContractPayload,
+    DeleteElevationPayload,
     FileRecordPayload,
     InvoicePayload,
     ProfessionalPayload,
@@ -208,6 +209,32 @@ def _fetch_document_files(document_id: int) -> list[dict]:
     )
 
 
+def _fetch_contract_files(contract_id: int) -> list[dict]:
+    return fetch_all(
+        """
+        SELECT
+            file_records.*,
+            vendors.name AS vendor_name,
+            units.name AS unit_name,
+            contracts.title AS contract_title,
+            invoices.invoice_number AS invoice_number,
+            regulatory_documents.document_type AS regulatory_document_type,
+            regulatory_documents.document_number AS regulatory_document_number,
+            users.name AS uploaded_by_name
+        FROM file_records
+        LEFT JOIN vendors ON vendors.id = file_records.vendor_id
+        LEFT JOIN units ON units.id = file_records.unit_id
+        LEFT JOIN contracts ON contracts.id = file_records.contract_id
+        LEFT JOIN invoices ON invoices.id = file_records.invoice_id
+        LEFT JOIN regulatory_documents ON regulatory_documents.id = file_records.regulatory_document_id
+        INNER JOIN users ON users.id = file_records.uploaded_by_user_id
+        WHERE file_records.contract_id = ?
+        ORDER BY datetime(file_records.created_at) DESC, file_records.id DESC
+        """,
+        (contract_id,),
+    )
+
+
 def _coerce_optional_int(value: str | None) -> int | None:
     if value in (None, "", "null"):
         return None
@@ -237,6 +264,62 @@ def _audit_user(current_user: dict | None) -> tuple[int | None, str | None, int 
     return current_user.get("id"), current_user.get("name"), current_user.get("session_id")
 
 
+def _require_delete_authorization(
+    current_user: dict,
+    elevation: DeleteElevationPayload | None,
+    *,
+    entity_type: str,
+    entity_id: int,
+) -> dict | None:
+    if current_user["role"] in {"adm", "superadm"}:
+        return None
+
+    if not elevation or not elevation.password:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operador precisa de elevacao de um admin ou superadmin para excluir.",
+        )
+
+    email = (elevation.email or "").strip().lower()
+    if not email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Informe o e-mail do admin ou superadmin.")
+
+    approver = fetch_one(
+        """
+        SELECT id, name, email, role, active, password_salt, password_hash
+        FROM users
+        WHERE email = ? AND role IN ('adm', 'superadm') AND active = 1
+        """,
+        (email,),
+    )
+    if not approver or not verify_password(elevation.password, approver["password_salt"], approver["password_hash"]):
+        actor_id, actor_name, session_id = _audit_user(current_user)
+        record_audit_event(
+            action="delete_elevation_failed",
+            entity_type=entity_type,
+            entity_id=entity_id,
+            description=f"Elevacao de exclusao negada para {current_user.get('name')}",
+            user_id=actor_id,
+            user_name=actor_name,
+            session_id=session_id,
+            metadata={"approver_email": email},
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Credencial de elevacao invalida.")
+
+    actor_id, actor_name, session_id = _audit_user(current_user)
+    record_audit_event(
+        action="delete_elevation_approved",
+        entity_type=entity_type,
+        entity_id=entity_id,
+        description=f"Exclusao elevada por {approver['name']} para operador {current_user.get('name')}",
+        user_id=actor_id,
+        user_name=actor_name,
+        session_id=session_id,
+        metadata={"approver_id": approver["id"], "approver_name": approver["name"], "approver_role": approver["role"]},
+    )
+    return {"id": approver["id"], "name": approver["name"], "email": approver["email"], "role": approver["role"]}
+
+
 def _record_document_attachment_event(
     *,
     action: str,
@@ -260,6 +343,37 @@ def _record_document_attachment_event(
         metadata={
             "document_type": file_record.get("regulatory_document_type"),
             "document_number": file_record.get("regulatory_document_number"),
+            "file_id": file_record.get("id"),
+            "file_name": file_record.get("original_name"),
+            "file_extension": file_record.get("extension"),
+            "category": file_record.get("category"),
+        },
+    )
+
+
+def _record_contract_attachment_event(
+    *,
+    action: str,
+    description: str,
+    file_record: dict,
+    current_user: dict,
+) -> None:
+    contract_id = file_record.get("contract_id")
+    if not contract_id:
+        return
+
+    actor_id, actor_name, session_id = _audit_user(current_user)
+    record_audit_event(
+        action=action,
+        entity_type="contract",
+        entity_id=contract_id,
+        description=description,
+        user_id=actor_id,
+        user_name=actor_name,
+        session_id=session_id,
+        metadata={
+            "contract_title": file_record.get("contract_title"),
+            "invoice_number": file_record.get("invoice_number"),
             "file_id": file_record.get("id"),
             "file_name": file_record.get("original_name"),
             "file_extension": file_record.get("extension"),
@@ -679,10 +793,11 @@ def update_vendor(vendor_id: int, payload: VendorPayload, current_user: dict = D
 
 
 @router.delete("/vendors/{vendor_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_vendor(vendor_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_vendor(vendor_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     vendor = _fetch_vendor(vendor_id)
     if not vendor:
         raise _not_found("Fornecedor")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="vendor", entity_id=vendor_id)
     try:
         execute("DELETE FROM vendors WHERE id = ?", (vendor_id,))
     except sqlite3.IntegrityError as error:
@@ -696,7 +811,7 @@ def delete_vendor(vendor_id: int, current_user: dict = Depends(get_current_user)
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"kind": vendor["kind"], "status": vendor["status"]},
+        metadata={"kind": vendor["kind"], "status": vendor["status"], "delete_approved_by": approver},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -808,10 +923,11 @@ def update_professional(professional_id: int, payload: ProfessionalPayload, curr
 
 
 @router.delete("/professionals/{professional_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_professional(professional_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_professional(professional_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     professional = _fetch_professional(professional_id)
     if not professional:
         raise _not_found("Profissional")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="professional", entity_id=professional_id)
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="delete",
@@ -821,7 +937,7 @@ def delete_professional(professional_id: int, current_user: dict = Depends(get_c
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"vendor_name": professional.get("vendor_name")},
+        metadata={"vendor_name": professional.get("vendor_name"), "delete_approved_by": approver},
     )
     execute("DELETE FROM professionals WHERE id = ?", (professional_id,))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -834,7 +950,8 @@ def list_units(q: str = Query(default="")) -> list[dict]:
         """
         SELECT *
         FROM units
-        WHERE (? = '' OR name LIKE ? OR code LIKE ? OR COALESCE(city, '') LIKE ?)
+        WHERE deleted_at IS NULL
+          AND (? = '' OR name LIKE ? OR code LIKE ? OR COALESCE(city, '') LIKE ?)
         ORDER BY name COLLATE NOCASE ASC
         """,
         (q.strip(), search, search, search),
@@ -872,7 +989,7 @@ def create_unit(payload: UnitPayload, current_user: dict = Depends(get_current_u
         )
     except sqlite3.IntegrityError as error:
         raise _handle_integrity_error(error) from error
-    unit = fetch_one("SELECT * FROM units WHERE id = ?", (unit_id,)) or {}
+    unit = fetch_one("SELECT * FROM units WHERE id = ? AND deleted_at IS NULL", (unit_id,)) or {}
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="create",
@@ -889,7 +1006,7 @@ def create_unit(payload: UnitPayload, current_user: dict = Depends(get_current_u
 
 @router.put("/units/{unit_id}")
 def update_unit(unit_id: int, payload: UnitPayload, current_user: dict = Depends(get_current_user)) -> dict:
-    if not fetch_one("SELECT id FROM units WHERE id = ?", (unit_id,)):
+    if not fetch_one("SELECT id FROM units WHERE id = ? AND deleted_at IS NULL", (unit_id,)):
         raise _not_found("Unidade")
     try:
         execute(
@@ -918,7 +1035,7 @@ def update_unit(unit_id: int, payload: UnitPayload, current_user: dict = Depends
         )
     except sqlite3.IntegrityError as error:
         raise _handle_integrity_error(error) from error
-    unit = fetch_one("SELECT * FROM units WHERE id = ?", (unit_id,)) or {}
+    unit = fetch_one("SELECT * FROM units WHERE id = ? AND deleted_at IS NULL", (unit_id,)) or {}
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="update",
@@ -934,14 +1051,20 @@ def update_unit(unit_id: int, payload: UnitPayload, current_user: dict = Depends
 
 
 @router.delete("/units/{unit_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_unit(unit_id: int, current_user: dict = Depends(get_current_user)) -> Response:
-    unit = fetch_one("SELECT * FROM units WHERE id = ?", (unit_id,)) or {}
+def delete_unit(unit_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
+    unit = fetch_one("SELECT * FROM units WHERE id = ? AND deleted_at IS NULL", (unit_id,)) or {}
     if not unit:
         raise _not_found("Unidade")
-    try:
-        execute("DELETE FROM units WHERE id = ?", (unit_id,))
-    except sqlite3.IntegrityError as error:
-        raise _handle_integrity_error(error) from error
+    approver = _require_delete_authorization(current_user, elevation, entity_type="unit", entity_id=unit_id)
+    deleted_at = utc_now_iso()
+    execute(
+        """
+        UPDATE units
+        SET active = 0, deleted_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (deleted_at, deleted_at, unit_id),
+    )
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="delete",
@@ -951,7 +1074,7 @@ def delete_unit(unit_id: int, current_user: dict = Depends(get_current_user)) ->
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"code": unit.get("code"), "city": unit.get("city"), "state": unit.get("state")},
+        metadata={"code": unit.get("code"), "city": unit.get("city"), "state": unit.get("state"), "delete_approved_by": approver},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -973,6 +1096,37 @@ def list_contracts(q: str = Query(default="")) -> list[dict]:
         """,
         (q.strip(), search, search, search),
     )
+
+
+@router.get("/contracts/{contract_id}/history")
+def get_contract_history(contract_id: int) -> dict[str, object]:
+    contract = _fetch_contract(contract_id)
+    if not contract:
+        raise _not_found("Orcamento")
+
+    invoices = fetch_all(
+        """
+        SELECT
+            invoices.*,
+            vendors.name AS vendor_name,
+            units.name AS unit_name,
+            contracts.title AS contract_title
+        FROM invoices
+        INNER JOIN vendors ON vendors.id = invoices.vendor_id
+        INNER JOIN units ON units.id = invoices.unit_id
+        LEFT JOIN contracts ON contracts.id = invoices.contract_id
+        WHERE invoices.contract_id = ?
+        ORDER BY date(COALESCE(invoices.due_date, invoices.issue_date, invoices.created_at)) ASC
+        """,
+        (contract_id,),
+    )
+
+    return {
+        "contract": contract,
+        "files": _fetch_contract_files(contract_id),
+        "invoices": invoices,
+        "history": list_entity_audit_logs("contract", contract_id),
+    }
 
 
 @router.post("/contracts", status_code=status.HTTP_201_CREATED)
@@ -1013,7 +1167,7 @@ def create_contract(payload: ContractPayload, current_user: dict = Depends(get_c
         action="create",
         entity_type="contract",
         entity_id=contract_id,
-        description=f"Contrato {contract.get('title', contract_id)} criado",
+        description=f"Orcamento {contract.get('title', contract_id)} criado",
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
@@ -1025,7 +1179,7 @@ def create_contract(payload: ContractPayload, current_user: dict = Depends(get_c
 @router.put("/contracts/{contract_id}")
 def update_contract(contract_id: int, payload: ContractPayload, current_user: dict = Depends(get_current_user)) -> dict:
     if not fetch_one("SELECT id FROM contracts WHERE id = ?", (contract_id,)):
-        raise _not_found("Contrato")
+        raise _not_found("Orcamento")
     try:
         execute(
             """
@@ -1061,7 +1215,7 @@ def update_contract(contract_id: int, payload: ContractPayload, current_user: di
         action="update",
         entity_type="contract",
         entity_id=contract_id,
-        description=f"Contrato {contract.get('title', contract_id)} atualizado",
+        description=f"Orcamento {contract.get('title', contract_id)} atualizado",
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
@@ -1071,10 +1225,11 @@ def update_contract(contract_id: int, payload: ContractPayload, current_user: di
 
 
 @router.delete("/contracts/{contract_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_contract(contract_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_contract(contract_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     contract = _fetch_contract(contract_id)
     if not contract:
-        raise _not_found("Contrato")
+        raise _not_found("Orcamento")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="contract", entity_id=contract_id)
     try:
         execute("DELETE FROM contracts WHERE id = ?", (contract_id,))
     except sqlite3.IntegrityError as error:
@@ -1084,11 +1239,11 @@ def delete_contract(contract_id: int, current_user: dict = Depends(get_current_u
         action="delete",
         entity_type="contract",
         entity_id=contract_id,
-        description=f"Contrato {contract.get('title', contract_id)} excluido",
+        description=f"Orcamento {contract.get('title', contract_id)} excluido",
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"vendor_name": contract.get("vendor_name"), "unit_name": contract.get("unit_name"), "status": contract.get("status")},
+        metadata={"vendor_name": contract.get("vendor_name"), "unit_name": contract.get("unit_name"), "status": contract.get("status"), "delete_approved_by": approver},
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1207,10 +1362,11 @@ def update_invoice(invoice_id: int, payload: InvoicePayload, current_user: dict 
 
 
 @router.delete("/invoices/{invoice_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_invoice(invoice_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_invoice(invoice_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     invoice = _fetch_invoice(invoice_id)
     if not invoice:
         raise _not_found("Nota fiscal")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="invoice", entity_id=invoice_id)
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="delete",
@@ -1220,7 +1376,7 @@ def delete_invoice(invoice_id: int, current_user: dict = Depends(get_current_use
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"vendor_name": invoice.get("vendor_name"), "unit_name": invoice.get("unit_name"), "status": invoice.get("status")},
+        metadata={"vendor_name": invoice.get("vendor_name"), "unit_name": invoice.get("unit_name"), "status": invoice.get("status"), "delete_approved_by": approver},
     )
     execute("DELETE FROM invoices WHERE id = ?", (invoice_id,))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1349,10 +1505,11 @@ def update_regulatory_document(document_id: int, payload: RegulatoryDocumentPayl
 
 
 @router.delete("/regulatory-documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_regulatory_document(document_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_regulatory_document(document_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     document = _fetch_document(document_id)
     if not document:
         raise _not_found("Documento regulatorio")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="regulatory_document", entity_id=document_id)
     actor_id, actor_name, session_id = _audit_user(current_user)
     record_audit_event(
         action="delete",
@@ -1362,7 +1519,7 @@ def delete_regulatory_document(document_id: int, current_user: dict = Depends(ge
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"document_type": document.get("document_type"), "unit_name": document.get("unit_name"), "status": document.get("status")},
+        metadata={"document_type": document.get("document_type"), "unit_name": document.get("unit_name"), "status": document.get("status"), "delete_approved_by": approver},
     )
     execute("DELETE FROM regulatory_documents WHERE id = ?", (document_id,))
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1478,6 +1635,12 @@ async def upload_file(
         file_record=file_record,
         current_user=current_user,
     )
+    _record_contract_attachment_event(
+        action="upload_attachment",
+        description=f"Anexo {file_record.get('original_name', upload.filename)} enviado para o orcamento",
+        file_record=file_record,
+        current_user=current_user,
+    )
     return file_record
 
 
@@ -1508,16 +1671,23 @@ def download_file(file_id: int, current_user: dict = Depends(get_current_user)) 
         file_record=file_record,
         current_user=current_user,
     )
+    _record_contract_attachment_event(
+        action="download_attachment",
+        description=f"Anexo {file_record.get('original_name', file_id)} baixado",
+        file_record=file_record,
+        current_user=current_user,
+    )
 
     media_type = file_record["content_type"] or "application/octet-stream"
     return FileResponse(path=file_path, media_type=media_type, filename=file_record["original_name"])
 
 
 @router.delete("/files/{file_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_file(file_id: int, current_user: dict = Depends(get_current_user)) -> Response:
+def delete_file(file_id: int, elevation: DeleteElevationPayload | None = None, current_user: dict = Depends(get_current_user)) -> Response:
     file_record = _fetch_file(file_id)
     if not file_record:
         raise _not_found("Arquivo")
+    approver = _require_delete_authorization(current_user, elevation, entity_type="file", entity_id=file_id)
 
     file_path = UPLOAD_DIR / file_record["stored_name"]
     actor_id, actor_name, session_id = _audit_user(current_user)
@@ -1529,11 +1699,17 @@ def delete_file(file_id: int, current_user: dict = Depends(get_current_user)) ->
         user_id=actor_id,
         user_name=actor_name,
         session_id=session_id,
-        metadata={"extension": file_record.get("extension"), "category": file_record.get("category")},
+        metadata={"extension": file_record.get("extension"), "category": file_record.get("category"), "delete_approved_by": approver},
     )
     _record_document_attachment_event(
         action="delete_attachment",
         description=f"Anexo {file_record.get('original_name', file_id)} removido da solicitacao",
+        file_record=file_record,
+        current_user=current_user,
+    )
+    _record_contract_attachment_event(
+        action="delete_attachment",
+        description=f"Anexo {file_record.get('original_name', file_id)} removido do orcamento",
         file_record=file_record,
         current_user=current_user,
     )

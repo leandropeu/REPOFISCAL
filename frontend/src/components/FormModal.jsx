@@ -1,4 +1,37 @@
-function renderField(field, value, onChange) {
+function renderField(field, value, onChange, readOnly = false) {
+  function formatCurrencyInput(inputValue) {
+    if (inputValue === "" || inputValue === null || typeof inputValue === "undefined") {
+      return "";
+    }
+    const text = String(inputValue);
+    if (text.includes("R$")) {
+      return text;
+    }
+    const normalized = Number(text);
+    if (Number.isNaN(normalized)) {
+      return text;
+    }
+    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(normalized);
+  }
+
+  function parseCurrencyInput(inputValue) {
+    let normalized = String(inputValue || "").replace(/[^\d,.-]/g, "");
+    const lastComma = normalized.lastIndexOf(",");
+    const lastDot = normalized.lastIndexOf(".");
+    if (lastComma >= 0 && lastDot >= 0) {
+      normalized = lastComma > lastDot
+        ? normalized.replace(/\./g, "").replace(",", ".")
+        : normalized.replace(/,/g, "");
+    } else if (lastComma >= 0) {
+      normalized = normalized.replace(/\./g, "").replace(",", ".");
+    } else if (lastDot >= 0) {
+      const decimalPart = normalized.slice(lastDot + 1);
+      normalized = decimalPart.length === 2 ? normalized.replace(/,/g, "") : normalized.replace(/\./g, "");
+    }
+    const parsed = Number(normalized);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
   if (field.type === "textarea") {
     return (
       <textarea
@@ -6,7 +39,8 @@ function renderField(field, value, onChange) {
         rows={field.rows || 4}
         placeholder={field.placeholder}
         value={value ?? ""}
-        onChange={(event) => onChange(field.name, event.target.value)}
+        readOnly={readOnly}
+        onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
       />
     );
   }
@@ -16,7 +50,8 @@ function renderField(field, value, onChange) {
       <select
         id={field.name}
         value={value ?? ""}
-        onChange={(event) => onChange(field.name, event.target.value)}
+        disabled={readOnly}
+        onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
       >
         <option value="">{field.placeholder || "Selecione"}</option>
         {field.options.map((option) => (
@@ -35,10 +70,26 @@ function renderField(field, value, onChange) {
           id={field.name}
           type="checkbox"
           checked={Boolean(value)}
-          onChange={(event) => onChange(field.name, event.target.checked)}
+          disabled={readOnly}
+          onChange={(event) => !readOnly && onChange(field.name, event.target.checked)}
         />
         <span>{field.checkboxLabel || field.label}</span>
       </label>
+    );
+  }
+
+  if (field.type === "currency") {
+    return (
+      <input
+        id={field.name}
+        type="text"
+        inputMode="decimal"
+        placeholder={field.placeholder || "R$ 0,00"}
+        value={formatCurrencyInput(value)}
+        readOnly={readOnly}
+        onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
+        onBlur={(event) => !readOnly && onChange(field.name, formatCurrencyInput(parseCurrencyInput(event.target.value)))}
+      />
     );
   }
 
@@ -49,8 +100,38 @@ function renderField(field, value, onChange) {
       placeholder={field.placeholder}
       step={field.step}
       value={value ?? ""}
-      onChange={(event) => onChange(field.name, event.target.value)}
+      readOnly={readOnly}
+      onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
     />
+  );
+}
+
+function ModalTools({ actions }) {
+  if (!actions?.enabled) {
+    return null;
+  }
+
+  return (
+    <div className="modal-tools">
+      <label className="field modal-tools__format" htmlFor="modal-export-format">
+        <span>Tipo</span>
+        <select
+          id="modal-export-format"
+          value={actions.format}
+          onChange={(event) => actions.onFormatChange(event.target.value)}
+        >
+          {actions.formatOptions.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+      </label>
+      <button type="button" className="secondary-button" onClick={() => actions.onExtract(actions.format)}>
+        Extrair
+      </button>
+      <button type="button" className="secondary-button" onClick={() => actions.onExtract("pdf")}>
+        Imprimir
+      </button>
+    </div>
   );
 }
 
@@ -108,10 +189,10 @@ function AttachmentHistory({ attachments }) {
         <div className="attachment-panel__header">
           <div>
             <span className="eyebrow">Anexos</span>
-            <h4>Solicitacao documental</h4>
+            <h4>{attachments.title || "Solicitacao documental"}</h4>
           </div>
         </div>
-        <div className="empty-state">Salve o documento primeiro para liberar anexos e historico completo.</div>
+        <div className="empty-state">{attachments.saveMessage || "Salve o documento primeiro para liberar anexos e historico completo."}</div>
       </section>
     );
   }
@@ -121,10 +202,10 @@ function AttachmentHistory({ attachments }) {
       <div className="attachment-panel__header">
         <div>
           <span className="eyebrow">Anexos</span>
-          <h4>Solicitacao documental</h4>
+          <h4>{attachments.title || "Solicitacao documental"}</h4>
         </div>
         <span className="panel__meta">
-          {attachments.files.length} arquivo(s) e {attachments.history.length} evento(s)
+          {attachments.files.length} arquivo(s), {(attachments.invoices || []).length} nota(s) e {attachments.history.length} evento(s)
         </span>
       </div>
 
@@ -136,9 +217,21 @@ function AttachmentHistory({ attachments }) {
           <input
             id="document-attachment-input"
             type="file"
-            accept=".pdf,.csv,.xml,.xlsx,.xls"
+            accept={attachments.getImportAccept ? attachments.getImportAccept(attachments.form.import_format) : ".pdf,.csv,.xml,.txt,.xlsx,.xls"}
             onChange={(event) => attachments.onChange("file", event.target.files?.[0] || null)}
           />
+        </label>
+        <label className="field" htmlFor="document-attachment-import-format">
+          <span>Tipo de importacao</span>
+          <select
+            id="document-attachment-import-format"
+            value={attachments.form.import_format || "auto"}
+            onChange={(event) => attachments.onChange("import_format", event.target.value)}
+          >
+            {(attachments.importFormatOptions || []).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </label>
         <label className="field" htmlFor="document-attachment-category">
           <span>Categoria</span>
@@ -158,9 +251,21 @@ function AttachmentHistory({ attachments }) {
         </label>
         <div className="attachment-panel__actions">
           <button type="button" className="primary-button" onClick={attachments.onUpload} disabled={attachments.uploading}>
-            {attachments.uploading ? "Enviando..." : "Anexar arquivo"}
+            {attachments.uploading ? "Enviando..." : attachments.uploadLabel || "Anexar arquivo"}
           </button>
         </div>
+      </div>
+
+      <div className="attachment-strip">
+        {attachments.files.length ? (
+          attachments.files.map((file) => (
+            <button key={`strip-${file.id}`} type="button" className="attachment-chip" onClick={() => attachments.onDownload(file)}>
+              {file.original_name}
+            </button>
+          ))
+        ) : (
+          <span>{attachments.emptyFilesLabel || "Nenhum anexo vinculado a esta solicitacao."}</span>
+        )}
       </div>
 
       <div className="attachment-columns">
@@ -182,15 +287,24 @@ function AttachmentHistory({ attachments }) {
                 </div>
               ))
             ) : (
-              <div className="empty-state">Nenhum anexo vinculado a esta solicitacao.</div>
+              <div className="empty-state">{attachments.emptyFilesLabel || "Nenhum anexo vinculado a esta solicitacao."}</div>
             )}
           </div>
         </div>
 
         <div className="attachment-card">
-          <span className="attachment-card__title">Historico de solicitacao</span>
+          <span className="attachment-card__title">{attachments.section === "contracts" ? "Notas fiscais e historico" : "Historico de solicitacao"}</span>
           <div className="attachment-timeline">
-            {attachments.history.length ? (
+            {attachments.section === "contracts" && attachments.invoices?.length ? (
+              attachments.invoices.map((invoice) => (
+                <div key={`invoice-${invoice.id}`} className="attachment-timeline__item">
+                  <strong>NF {invoice.invoice_number}</strong>
+                  <span>
+                    {(invoice.status || "Sem status")} - {attachments.formatDateTime(invoice.issue_date || invoice.due_date || invoice.created_at)}
+                  </span>
+                </div>
+              ))
+            ) : attachments.history.length ? (
               attachments.history.map((entry) => (
                 <div key={`${entry.id}-${entry.created_at}`} className="attachment-timeline__item">
                   <strong>{entry.description}</strong>
@@ -219,7 +333,9 @@ export default function FormModal({
   onSubmit,
   submitLabel,
   report,
-  attachments
+  attachments,
+  readOnly = false,
+  actions = null
 }) {
   if (!open) {
     return null;
@@ -231,12 +347,13 @@ export default function FormModal({
         <div className="modal-card__header">
           <div>
             <h3>{title}</h3>
-            <p>Preencha os campos necessarios e acompanhe o relatorio historico do processo.</p>
+            <p>{readOnly ? "Visualizacao do registro com campos bloqueados para consulta." : "Preencha os campos necessarios e acompanhe o relatorio historico do processo."}</p>
           </div>
           <button type="button" className="icon-button" onClick={onClose}>
             Fechar
           </button>
         </div>
+        <ModalTools actions={actions} />
         <form className="modal-form" onSubmit={onSubmit}>
           <div className="modal-layout">
             <div className="modal-grid">
@@ -246,7 +363,7 @@ export default function FormModal({
                     key={field.name}
                     className={`field field--checkbox ${field.fullWidth ? "field--full" : ""}`}
                   >
-                    {renderField(field, formData[field.name], onChange)}
+                    {renderField(field, formData[field.name], onChange, readOnly)}
                   </div>
                 ) : (
                   <label
@@ -255,7 +372,7 @@ export default function FormModal({
                     htmlFor={field.name}
                   >
                     <span>{field.label}</span>
-                    {renderField(field, formData[field.name], onChange)}
+                    {renderField(field, formData[field.name], onChange, readOnly)}
                   </label>
                 )
               )}
@@ -265,11 +382,13 @@ export default function FormModal({
           <AttachmentHistory attachments={attachments} />
           <div className="modal-actions">
             <button type="button" className="secondary-button" onClick={onClose}>
-              Cancelar
+              {readOnly ? "Fechar" : "Cancelar"}
             </button>
-            <button type="submit" className="primary-button">
-              {submitLabel}
-            </button>
+            {!readOnly ? (
+              <button type="submit" className="primary-button">
+                {submitLabel}
+              </button>
+            ) : null}
           </div>
         </form>
       </div>

@@ -239,6 +239,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_documents_expiry ON regulatory_documents(expiry_date);
             CREATE INDEX IF NOT EXISTS idx_files_created_at ON file_records(created_at);
             CREATE INDEX IF NOT EXISTS idx_files_vendor ON file_records(vendor_id);
+            CREATE INDEX IF NOT EXISTS idx_files_contract ON file_records(contract_id);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs(entity_type, entity_id);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_user ON audit_logs(user_id);
@@ -259,6 +260,14 @@ def init_db() -> None:
             {
                 "compliance_type": "TEXT",
                 "certificate_number": "TEXT",
+            },
+        )
+
+        _ensure_columns(
+            connection,
+            "units",
+            {
+                "deleted_at": "TEXT",
             },
         )
 

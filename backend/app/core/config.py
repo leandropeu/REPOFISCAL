@@ -16,4 +16,4 @@ CORS_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
-ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".csv", ".xml", ".xlsx", ".xls"}
+ALLOWED_UPLOAD_EXTENSIONS = {".pdf", ".csv", ".xml", ".txt", ".xlsx", ".xls"}

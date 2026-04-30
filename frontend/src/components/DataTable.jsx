@@ -2,6 +2,7 @@ export default function DataTable({
   columns,
   rows,
   emptyMessage,
+  onView,
   onEdit,
   onDelete,
   getRowClassName
@@ -23,7 +24,11 @@ export default function DataTable({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} className={getRowClassName ? getRowClassName(row) : ""}>
+            <tr
+              key={row.id}
+              className={`${getRowClassName ? getRowClassName(row) : ""} ${onView ? "data-table__row--clickable" : ""}`}
+              onClick={onView ? () => onView(row) : undefined}
+            >
               {columns.map((column) => (
                 <td key={`${row.id}-${column.key}`}>
                   {column.render ? column.render(row[column.key], row) : row[column.key] || "-"}
@@ -32,7 +37,10 @@ export default function DataTable({
               {(onEdit || onDelete) && (
                 <td className="table-actions">
                   {onEdit ? (
-                    <button type="button" className="ghost-button" onClick={() => onEdit(row)}>
+                    <button type="button" className="ghost-button" onClick={(event) => {
+                      event.stopPropagation();
+                      onEdit(row);
+                    }}>
                       Editar
                     </button>
                   ) : null}
@@ -40,7 +48,10 @@ export default function DataTable({
                     <button
                       type="button"
                       className="ghost-button ghost-button--danger"
-                      onClick={() => onDelete(row)}
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDelete(row);
+                      }}
                     >
                       Excluir
                     </button>
