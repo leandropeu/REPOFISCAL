@@ -927,7 +927,9 @@ export default function App() {
   });
   const [formData, setFormData] = useState({});
   const [documentAttachments, setDocumentAttachments] = useState(defaultDocumentAttachments);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
+    typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false
+  );
   const [tableExportFormat, setTableExportFormat] = useState("csv");
   const [modalExportFormat, setModalExportFormat] = useState("csv");
   const [extractDialogOpen, setExtractDialogOpen] = useState(false);

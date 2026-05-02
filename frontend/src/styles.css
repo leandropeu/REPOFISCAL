@@ -698,7 +698,8 @@ button {
   gap: 5px;
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-right: 0;
 }
 
@@ -1769,7 +1770,6 @@ button {
 
 @media (max-width: 1120px) {
   .auth-layout,
-  .app-shell,
   .panel-grid--triple,
   .card-grid--six,
   .operations-summary-grid,
@@ -1826,9 +1826,99 @@ button {
 }
 
 @media (max-width: 720px) {
+  .app-shell {
+    grid-template-columns: 1fr;
+    position: relative;
+  }
+
+  .app-shell--sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 30;
+    width: min(224px, 78vw);
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-right-color: rgba(163, 196, 231, 0.18);
+    box-shadow: 16px 0 34px rgba(0, 0, 0, 0.28);
+    transition: width 180ms ease, padding 180ms ease, box-shadow 180ms ease;
+  }
+
+  .app-shell--sidebar-collapsed .sidebar {
+    width: 58px;
+    padding-inline: 7px;
+    box-shadow: 8px 0 22px rgba(0, 0, 0, 0.22);
+  }
+
+  .content {
+    margin-left: 58px;
+    min-width: 0;
+    transition: margin-left 180ms ease;
+  }
+
+  .brand-block {
+    align-items: center;
+    min-height: 42px;
+    padding-bottom: 6px;
+  }
+
+  .brand-block__logo {
+    max-width: 154px;
+    padding: 6px 8px;
+    border-radius: 14px;
+  }
+
+  .sidebar-toggle {
+    flex-basis: 34px;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+  }
+
+  .nav-tabs {
+    gap: 6px;
+    padding-right: 2px;
+  }
+
+  .nav-tab {
+    width: 100%;
+    min-height: 38px;
+    padding: 9px 8px;
+    border-radius: 8px;
+    line-height: 1.1;
+  }
+
+  .sidebar-footer {
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .sidebar-footer .secondary-button,
+  .sidebar .theme-switcher select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .app-shell--sidebar-collapsed .brand-block {
+    min-height: 42px;
+  }
+
+  .app-shell--sidebar-collapsed .sidebar-toggle {
+    margin-inline: auto;
+  }
+
+  .app-shell--sidebar-collapsed .nav-tab {
+    min-height: 38px;
+    padding-inline: 4px;
+    border-radius: 8px;
+  }
+
   .auth-layout,
   .content,
-  .sidebar,
   .auth-panel--hero,
   .auth-panel--form,
   .panel,
