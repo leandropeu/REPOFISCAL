@@ -926,6 +926,9 @@ export default function App() {
     loading: false
   });
   const [formData, setFormData] = useState({});
+  const [initialModalFormData, setInitialModalFormData] = useState({});
+  const [modalFieldErrors, setModalFieldErrors] = useState({});
+  const [savingModal, setSavingModal] = useState(false);
   const [documentAttachments, setDocumentAttachments] = useState(defaultDocumentAttachments);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() =>
     typeof window !== "undefined" ? window.matchMedia("(max-width: 720px)").matches : false
@@ -1086,12 +1089,13 @@ export default function App() {
   const fieldsBySection = useMemo(
     () => ({
       users: [
-        { name: "name", label: "Nome do usuario", placeholder: "Usuario Fiscal" },
-        { name: "email", label: "E-mail", type: "email", placeholder: "usuario@repofiscal.local" },
+        { name: "name", label: "Nome do usuario", placeholder: "Usuario Fiscal", required: true },
+        { name: "email", label: "E-mail", type: "email", inputMode: "email", placeholder: "usuario@repofiscal.local", required: true },
         {
           name: "role",
           label: "Perfil",
           type: "select",
+          required: true,
           options: [
             { value: "operator", label: "Operador" },
             { value: "adm", label: "Administrador" },
@@ -1102,6 +1106,7 @@ export default function App() {
           name: "password",
           label: "Senha",
           type: "password",
+          required: !modal.item,
           placeholder: modal.item ? "Preencha apenas para alterar a senha" : "Senha inicial"
         },
         { name: "active", label: "Usuario ativo", type: "checkbox", checkboxLabel: "Usuario ativo" }
@@ -1111,20 +1116,22 @@ export default function App() {
           name: "kind",
           label: "Tipo de fornecedor",
           type: "select",
+          required: true,
           options: [
             { value: "service", label: "Servico" },
             { value: "product", label: "Produto" }
           ]
         },
-        { name: "name", label: "Fornecedor", placeholder: "Fornecedor Alpha" },
-        { name: "document", label: "CNPJ ou documento", placeholder: "00.000.000/0001-00" },
+        { name: "name", label: "Fornecedor", placeholder: "Fornecedor Alpha", required: true },
+        { name: "document", label: "CNPJ ou CPF", placeholder: "00.000.000/0001-00", mask: "cpfCnpj", inputMode: "numeric" },
         { name: "contact_name", label: "Contato principal", placeholder: "Nome do responsavel" },
-        { name: "email", label: "E-mail", type: "email", placeholder: "financeiro@fornecedor.com" },
-        { name: "phone", label: "Telefone", placeholder: "(11) 99999-0000" },
+        { name: "email", label: "E-mail", type: "email", inputMode: "email", placeholder: "financeiro@fornecedor.com" },
+        { name: "phone", label: "Telefone", placeholder: "(11) 99999-0000", mask: "phone", inputMode: "tel" },
         {
           name: "status",
           label: "Status",
           type: "select",
+          required: true,
           options: [
             { value: "active", label: "Ativo" },
             { value: "inactive", label: "Inativo" }
@@ -1133,23 +1140,23 @@ export default function App() {
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
       units: [
-        { name: "name", label: "Nome da unidade", placeholder: "Matriz Sao Paulo" },
-        { name: "code", label: "Codigo interno", placeholder: "SP01" },
-        { name: "tax_id", label: "CNPJ", placeholder: "00.000.000/0001-00" },
+        { name: "name", label: "Nome da unidade", placeholder: "Matriz Sao Paulo", required: true },
+        { name: "code", label: "Codigo interno", placeholder: "SP01", required: true },
+        { name: "tax_id", label: "CNPJ", placeholder: "00.000.000/0001-00", mask: "cpfCnpj", inputMode: "numeric" },
         { name: "state_registration", label: "Inscricao estadual", placeholder: "123456789" },
         { name: "city", label: "Cidade", placeholder: "Sao Paulo" },
-        { name: "state", label: "UF", placeholder: "SP" },
+        { name: "state", label: "UF", placeholder: "SP", mask: "state", maxLength: 2 },
         { name: "address", label: "Endereco", fullWidth: true, placeholder: "Rua, numero, bairro" },
         { name: "manager_name", label: "Gestor", placeholder: "Nome do gestor" },
-        { name: "manager_email", label: "E-mail do gestor", type: "email", placeholder: "gestor@empresa.com" },
-        { name: "manager_phone", label: "Telefone do gestor", placeholder: "(11) 97777-6666" },
+        { name: "manager_email", label: "E-mail do gestor", type: "email", inputMode: "email", placeholder: "gestor@empresa.com" },
+        { name: "manager_phone", label: "Telefone do gestor", placeholder: "(11) 97777-6666", mask: "phone", inputMode: "tel" },
         { name: "active", label: "Unidade ativa", type: "checkbox", checkboxLabel: "Unidade ativa" },
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
       contracts: [
-        { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
-        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
-        { name: "title", label: "Titulo do orcamento", placeholder: "Prestacao de servicos tecnicos" },
+        { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions, required: true },
+        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions, required: true },
+        { name: "title", label: "Titulo do orcamento", placeholder: "Prestacao de servicos tecnicos", required: true },
         { name: "contract_number", label: "Numero do orcamento", placeholder: "ORC-2026-001" },
         { name: "category", label: "Categoria", placeholder: "Fiscal, manutencao, licenca" },
         {
@@ -1169,6 +1176,7 @@ export default function App() {
           name: "status",
           label: "Status",
           type: "select",
+          required: true,
           options: [
             { value: "active", label: "Ativo" },
             { value: "signed", label: "Assinado" },
@@ -1180,10 +1188,10 @@ export default function App() {
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
       invoices: [
-        { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
-        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
+        { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions, required: true },
+        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions, required: true },
         { name: "contract_id", label: "Orcamento vinculado", type: "select", options: selectOptions.contractOptions },
-        { name: "invoice_number", label: "Numero da nota", placeholder: "100245" },
+        { name: "invoice_number", label: "Numero da nota", placeholder: "100245", required: true },
         { name: "series", label: "Serie", placeholder: "1" },
         { name: "issue_date", label: "Emissao", type: "date" },
         { name: "due_date", label: "Vencimento", type: "date" },
@@ -1193,6 +1201,7 @@ export default function App() {
           name: "status",
           label: "Status",
           type: "select",
+          required: true,
           options: [
             { value: "pending", label: "Pendente" },
             { value: "review", label: "Em analise" },
@@ -1200,11 +1209,11 @@ export default function App() {
             { value: "canceled", label: "Cancelado" }
           ]
         },
-        { name: "access_key", label: "Chave de acesso", placeholder: "44 digitos" },
+        { name: "access_key", label: "Chave de acesso", placeholder: "44 digitos", mask: "accessKey", inputMode: "numeric", maxLength: 54 },
         { name: "notes", label: "Observacoes", type: "textarea", fullWidth: true }
       ],
       documents: [
-        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions },
+        { name: "unit_id", label: "Unidade", type: "select", options: selectOptions.unitOptions, required: true },
         { name: "vendor_id", label: "Fornecedor", type: "select", options: selectOptions.vendorOptions },
         { name: "contract_id", label: "Orcamento", type: "select", options: selectOptions.contractOptions },
         { name: "request_number", label: "Numero do pedido", placeholder: "PED-2026-001" },
@@ -1216,6 +1225,7 @@ export default function App() {
           name: "status",
           label: "Status",
           type: "select",
+          required: true,
           options: [
             { value: "in_progress", label: "Em tramite" },
             { value: "issued", label: "Emitido" },
@@ -2062,6 +2072,8 @@ export default function App() {
   function openModal(section, item = null, options = {}) {
     setBanner("");
     setError("");
+    setModalFieldErrors({});
+    setSavingModal(false);
     const documentType = options.documentType || item?.document_type || null;
     const mode = options.mode || (item ? "edit" : "create");
     setModal({ section, item, documentType, mode });
@@ -2070,15 +2082,30 @@ export default function App() {
       nextForm.document_type = documentType;
     }
     setFormData(nextForm);
+    setInitialModalFormData(nextForm);
   }
 
   function closeModal() {
     setModal({ section: null, item: null, documentType: null, mode: "edit" });
     setFormData({});
+    setInitialModalFormData({});
+    setModalFieldErrors({});
+    setSavingModal(false);
     setDocumentAttachments(defaultDocumentAttachments);
   }
 
   function updateFormField(name, value) {
+    if (error) {
+      setError("");
+    }
+    setModalFieldErrors((current) => {
+      if (!current[name]) {
+        return current;
+      }
+      const next = { ...current };
+      delete next[name];
+      return next;
+    });
     setFormData((current) => ({ ...current, [name]: value }));
   }
 
@@ -2177,9 +2204,69 @@ export default function App() {
     return payload;
   }
 
+  function validateModalForm(section, data) {
+    const fields = fieldsBySection[section] || [];
+    const fieldErrors = {};
+
+    fields
+      .filter((field) => field.required)
+      .forEach((field) => {
+        const value = data[field.name];
+        if (value === null || typeof value === "undefined" || String(value).trim() === "") {
+          fieldErrors[field.name] = `${field.label} e obrigatorio.`;
+        }
+      });
+
+    fields
+      .filter((field) => field.type === "email" && !fieldErrors[field.name])
+      .forEach((field) => {
+        const value = String(data[field.name] || "").trim();
+        if (value && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+          fieldErrors[field.name] = `Informe um e-mail valido.`;
+        }
+      });
+
+    fields
+      .filter((field) => field.mask && !fieldErrors[field.name])
+      .forEach((field) => {
+        const value = String(data[field.name] || "");
+        const digits = value.replace(/\D/g, "");
+        if (!digits) {
+          return;
+        }
+
+        if (field.mask === "cpfCnpj" && digits.length !== 11 && digits.length !== 14) {
+          fieldErrors[field.name] = "Informe CPF com 11 digitos ou CNPJ com 14 digitos.";
+        }
+        if (field.mask === "phone" && digits.length < 10) {
+          fieldErrors[field.name] = "Informe telefone com DDD.";
+        }
+        if (field.mask === "accessKey" && digits.length !== 44) {
+          fieldErrors[field.name] = "Informe a chave de acesso com 44 digitos.";
+        }
+      });
+
+    const messages = Object.values(fieldErrors);
+    if (messages.length) {
+      return {
+        formError: messages.length === 1 ? messages[0] : "Revise os campos destacados antes de salvar.",
+        fieldErrors
+      };
+    }
+
+    return { formError: "", fieldErrors: {} };
+  }
+
+  function normalizeFormSnapshot(value) {
+    return JSON.stringify(value, Object.keys(value || {}).sort());
+  }
+
+  const modalHasUnsavedChanges = Boolean(modal.section) &&
+    normalizeFormSnapshot(formData) !== normalizeFormSnapshot(initialModalFormData);
+
   async function saveCurrentItem(event) {
     event.preventDefault();
-    if (!modal.section || modal.mode === "view") {
+    if (!modal.section || modal.mode === "view" || savingModal) {
       return;
     }
 
@@ -2187,6 +2274,15 @@ export default function App() {
     setError("");
 
     try {
+      const validation = validateModalForm(modal.section, formData);
+      if (validation.formError) {
+        setModalFieldErrors(validation.fieldErrors);
+        setError(validation.formError);
+        return;
+      }
+
+      setModalFieldErrors({});
+      setSavingModal(true);
       const payload = normalizePayload(modal.section, formData, modal.documentType);
       const basePath = entityPath[modal.section];
       if (modal.item?.id) {
@@ -2200,6 +2296,8 @@ export default function App() {
       await loadAllData();
     } catch (saveError) {
       setError(saveError.message);
+    } finally {
+      setSavingModal(false);
     }
   }
 
@@ -3579,6 +3677,10 @@ export default function App() {
           attachments={modalAttachments}
           readOnly={modalReadOnly}
           actions={modalActionTools}
+          error={error}
+          fieldErrors={modalFieldErrors}
+          saving={savingModal}
+          hasUnsavedChanges={modalHasUnsavedChanges}
         />
 
         {extractDialogOpen ? (

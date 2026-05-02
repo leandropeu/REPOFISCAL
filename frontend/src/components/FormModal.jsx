@@ -1,43 +1,108 @@
-function renderField(field, value, onChange, readOnly = false) {
-  function formatCurrencyInput(inputValue) {
-    if (inputValue === "" || inputValue === null || typeof inputValue === "undefined") {
-      return "";
-    }
-    const text = String(inputValue);
-    if (text.includes("R$")) {
-      return text;
-    }
-    const normalized = Number(text);
-    if (Number.isNaN(normalized)) {
-      return text;
-    }
-    return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(normalized);
+import { useEffect, useState } from "react";
+
+function onlyDigits(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+function formatCpfCnpj(value) {
+  const digits = onlyDigits(value).slice(0, 14);
+  if (digits.length <= 11) {
+    return digits
+      .replace(/^(\d{3})(\d)/, "$1.$2")
+      .replace(/^(\d{3})\.(\d{3})(\d)/, "$1.$2.$3")
+      .replace(/^(\d{3})\.(\d{3})\.(\d{3})(\d)/, "$1.$2.$3-$4");
   }
 
-  function parseCurrencyInput(inputValue) {
-    let normalized = String(inputValue || "").replace(/[^\d,.-]/g, "");
-    const lastComma = normalized.lastIndexOf(",");
-    const lastDot = normalized.lastIndexOf(".");
-    if (lastComma >= 0 && lastDot >= 0) {
-      normalized = lastComma > lastDot
-        ? normalized.replace(/\./g, "").replace(",", ".")
-        : normalized.replace(/,/g, "");
-    } else if (lastComma >= 0) {
-      normalized = normalized.replace(/\./g, "").replace(",", ".");
-    } else if (lastDot >= 0) {
-      const decimalPart = normalized.slice(lastDot + 1);
-      normalized = decimalPart.length === 2 ? normalized.replace(/,/g, "") : normalized.replace(/\./g, "");
-    }
-    const parsed = Number(normalized);
-    return Number.isNaN(parsed) ? 0 : parsed;
+  return digits
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/^(\d{2})\.(\d{3})\.(\d{3})(\d)/, "$1.$2.$3/$4")
+    .replace(/^(\d{2})\.(\d{3})\.(\d{3})\/(\d{4})(\d)/, "$1.$2.$3/$4-$5");
+}
+
+function formatPhone(value) {
+  const digits = onlyDigits(value).slice(0, 11);
+  if (digits.length <= 10) {
+    return digits
+      .replace(/^(\d{2})(\d)/, "($1) $2")
+      .replace(/^(\(\d{2}\) \d{4})(\d)/, "$1-$2");
   }
 
+  return digits
+    .replace(/^(\d{2})(\d)/, "($1) $2")
+    .replace(/^(\(\d{2}\) \d{5})(\d)/, "$1-$2");
+}
+
+function formatState(value) {
+  return String(value || "").replace(/[^a-z]/gi, "").slice(0, 2).toUpperCase();
+}
+
+function formatAccessKey(value) {
+  return onlyDigits(value).slice(0, 44).replace(/(\d{4})(?=\d)/g, "$1 ");
+}
+
+function parseCurrencyInput(inputValue) {
+  let normalized = String(inputValue || "").replace(/[^\d,.-]/g, "");
+  const lastComma = normalized.lastIndexOf(",");
+  const lastDot = normalized.lastIndexOf(".");
+  if (lastComma >= 0 && lastDot >= 0) {
+    normalized = lastComma > lastDot
+      ? normalized.replace(/\./g, "").replace(",", ".")
+      : normalized.replace(/,/g, "");
+  } else if (lastComma >= 0) {
+    normalized = normalized.replace(/\./g, "").replace(",", ".");
+  } else if (lastDot >= 0) {
+    const decimalPart = normalized.slice(lastDot + 1);
+    normalized = decimalPart.length === 2 ? normalized.replace(/,/g, "") : normalized.replace(/\./g, "");
+  }
+  const parsed = Number(normalized);
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatCurrencyInput(inputValue) {
+  if (inputValue === "" || inputValue === null || typeof inputValue === "undefined") {
+    return "";
+  }
+  const text = String(inputValue);
+  if (text.includes("R$")) {
+    return text;
+  }
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(parseCurrencyInput(text));
+}
+
+function formatCurrencyTyping(inputValue) {
+  const digits = onlyDigits(inputValue);
+  if (!digits) {
+    return "";
+  }
+  const cents = Number(digits) / 100;
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents);
+}
+
+function applyMask(field, inputValue) {
+  switch (field.mask) {
+    case "cpfCnpj":
+      return formatCpfCnpj(inputValue);
+    case "phone":
+      return formatPhone(inputValue);
+    case "state":
+      return formatState(inputValue);
+    case "accessKey":
+      return formatAccessKey(inputValue);
+    default:
+      return inputValue;
+  }
+}
+
+function renderField(field, value, onChange, readOnly = false, hasError = false) {
   if (field.type === "textarea") {
     return (
       <textarea
         id={field.name}
         rows={field.rows || 4}
         placeholder={field.placeholder}
+        required={Boolean(field.required)}
+        aria-invalid={hasError || undefined}
         value={value ?? ""}
         readOnly={readOnly}
         onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
@@ -50,6 +115,8 @@ function renderField(field, value, onChange, readOnly = false) {
       <select
         id={field.name}
         value={value ?? ""}
+        required={Boolean(field.required)}
+        aria-invalid={hasError || undefined}
         disabled={readOnly}
         onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
       >
@@ -85,23 +152,31 @@ function renderField(field, value, onChange, readOnly = false) {
         type="text"
         inputMode="decimal"
         placeholder={field.placeholder || "R$ 0,00"}
+        required={Boolean(field.required)}
+        aria-invalid={hasError || undefined}
         value={formatCurrencyInput(value)}
         readOnly={readOnly}
-        onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
+        onChange={(event) => !readOnly && onChange(field.name, formatCurrencyTyping(event.target.value))}
         onBlur={(event) => !readOnly && onChange(field.name, formatCurrencyInput(parseCurrencyInput(event.target.value)))}
       />
     );
   }
 
+  const inputValue = field.mask ? applyMask(field, value) : value ?? "";
+
   return (
     <input
       id={field.name}
       type={field.type || "text"}
+      inputMode={field.inputMode}
       placeholder={field.placeholder}
       step={field.step}
-      value={value ?? ""}
+      required={Boolean(field.required)}
+      aria-invalid={hasError || undefined}
+      maxLength={field.maxLength}
+      value={inputValue}
       readOnly={readOnly}
-      onChange={(event) => !readOnly && onChange(field.name, event.target.value)}
+      onChange={(event) => !readOnly && onChange(field.name, applyMask(field, event.target.value))}
     />
   );
 }
@@ -335,44 +410,77 @@ export default function FormModal({
   report,
   attachments,
   readOnly = false,
-  actions = null
+  actions = null,
+  error = "",
+  fieldErrors = {},
+  saving = false,
+  hasUnsavedChanges = false
 }) {
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      setConfirmCloseOpen(false);
+    }
+  }, [open]);
+
   if (!open) {
     return null;
   }
 
+  function requestClose() {
+    if (readOnly || !hasUnsavedChanges) {
+      onClose();
+      return;
+    }
+
+    setConfirmCloseOpen(true);
+  }
+
+  function keepEditing() {
+    setConfirmCloseOpen(false);
+  }
+
+  function confirmClose() {
+    setConfirmCloseOpen(false);
+    onClose();
+  }
+
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={requestClose}>
       <div className="modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
         <div className="modal-card__header">
           <div>
             <h3>{title}</h3>
             <p>{readOnly ? "Visualizacao do registro com campos bloqueados para consulta." : "Preencha os campos necessarios e acompanhe o relatorio historico do processo."}</p>
           </div>
-          <button type="button" className="icon-button" onClick={onClose}>
+          <button type="button" className="icon-button" onClick={requestClose}>
             Fechar
           </button>
         </div>
         <ModalTools actions={actions} />
-        <form className="modal-form" onSubmit={onSubmit}>
+        <form className="modal-form" onSubmit={onSubmit} noValidate>
+          {error && !readOnly ? <div className="banner banner--error modal-form__banner">{error}</div> : null}
           <div className="modal-layout">
             <div className="modal-grid">
               {fields.map((field) =>
                 field.type === "checkbox" ? (
                   <div
                     key={field.name}
-                    className={`field field--checkbox ${field.fullWidth ? "field--full" : ""}`}
+                    className={`field field--checkbox ${field.fullWidth ? "field--full" : ""} ${fieldErrors[field.name] ? "field--invalid" : ""}`}
                   >
-                    {renderField(field, formData[field.name], onChange, readOnly)}
+                    {renderField(field, formData[field.name], onChange, readOnly, Boolean(fieldErrors[field.name]))}
+                    {fieldErrors[field.name] ? <small className="field__error">{fieldErrors[field.name]}</small> : null}
                   </div>
                 ) : (
                   <label
                     key={field.name}
-                    className={`field ${field.fullWidth ? "field--full" : ""}`}
+                    className={`field ${field.fullWidth ? "field--full" : ""} ${fieldErrors[field.name] ? "field--invalid" : ""}`}
                     htmlFor={field.name}
                   >
                     <span>{field.label}</span>
-                    {renderField(field, formData[field.name], onChange, readOnly)}
+                    {renderField(field, formData[field.name], onChange, readOnly, Boolean(fieldErrors[field.name]))}
+                    {fieldErrors[field.name] ? <small className="field__error">{fieldErrors[field.name]}</small> : null}
                   </label>
                 )
               )}
@@ -381,17 +489,36 @@ export default function FormModal({
           </div>
           <AttachmentHistory attachments={attachments} />
           <div className="modal-actions">
-            <button type="button" className="secondary-button" onClick={onClose}>
+            <button type="button" className="secondary-button" onClick={requestClose}>
               {readOnly ? "Fechar" : "Cancelar"}
             </button>
             {!readOnly ? (
-              <button type="submit" className="primary-button">
-                {submitLabel}
+              <button type="submit" className="primary-button" disabled={saving}>
+                {saving ? "Salvando..." : submitLabel}
               </button>
             ) : null}
           </div>
         </form>
       </div>
+      {confirmCloseOpen ? (
+        <div className="confirm-close-backdrop" role="presentation" onClick={(event) => event.stopPropagation()}>
+          <section className="confirm-close-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-close-title">
+            <div>
+              <span className="eyebrow">Confirmacao</span>
+              <h3 id="confirm-close-title">Deseja fechar este formulario?</h3>
+              <p>As alteracoes ainda nao salvas serao perdidas.</p>
+            </div>
+            <div className="confirm-close-actions">
+              <button type="button" className="secondary-button" onClick={keepEditing}>
+                Nao
+              </button>
+              <button type="button" className="primary-button primary-button--danger" onClick={confirmClose}>
+                Sim
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

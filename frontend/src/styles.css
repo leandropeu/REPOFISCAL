@@ -221,6 +221,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
 #root {
   height: 100%;
   overflow: hidden;
@@ -446,6 +451,19 @@ button {
 .search-input:focus {
   border-color: var(--field-focus);
   box-shadow: 0 0 0 3px var(--field-shadow);
+}
+
+.field--invalid input,
+.field--invalid textarea,
+.field--invalid select {
+  border-color: rgba(255, 108, 108, 0.72);
+  box-shadow: 0 0 0 3px rgba(255, 108, 108, 0.12);
+}
+
+.field__error {
+  color: var(--danger);
+  font-size: 0.72rem;
+  line-height: 1.25;
 }
 
 .field textarea {
@@ -1193,6 +1211,49 @@ button {
   padding: 12px;
   background: var(--modal-surface);
   overflow: hidden;
+}
+
+.confirm-close-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(2, 9, 18, 0.48);
+}
+
+.confirm-close-card {
+  width: min(420px, calc(100vw - 28px));
+  border-radius: 16px;
+  padding: 16px;
+  background: var(--modal-surface);
+  border: 1px solid rgba(255, 190, 120, 0.24);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.36);
+  display: grid;
+  gap: 14px;
+}
+
+.confirm-close-card h3,
+.confirm-close-card p {
+  margin: 0;
+}
+
+.confirm-close-card h3 {
+  margin-top: 4px;
+  font-size: 1.08rem;
+}
+
+.confirm-close-card p {
+  margin-top: 6px;
+  color: var(--text-soft);
+  font-size: 0.84rem;
+}
+
+.confirm-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .elevation-card {
@@ -2099,6 +2160,14 @@ button {
 
   .modal-form {
     overflow: visible;
+  }
+
+  .confirm-close-card {
+    align-self: center;
+  }
+
+  .confirm-close-actions {
+    flex-direction: column-reverse;
   }
 
   .modal-layout,
